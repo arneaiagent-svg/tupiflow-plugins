@@ -1,0 +1,25 @@
+{
+  "name": "tupiflow-plugins",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "build": "node scripts/build-all.mjs",
+    "publish-all": "node scripts/publish-all.mjs",
+    "seed-snapshot": "node scripts/seed-snapshot.mjs",
+    "check": "bash scripts/check.sh",
+    "type-check": "pnpm -r --filter \"./packages/*\" type-check",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm -r build && changeset publish"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.12",
+    "@changesets/cli": "^2.27.0",
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "toml": "^3.0.0",
+    "typescript": "^5.6.0"
+  }
+}

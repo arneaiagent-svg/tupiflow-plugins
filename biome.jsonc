@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "**/*",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/.output"
+    ]
+  },
+  "linter": {
+    "rules": {
+      "suspicious": {
+        "useAwait": "off",
+        "noBitwiseOperators": "off"
+      },
+      "performance": {
+        "useTopLevelRegex": "off"
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": "off"
+      },
+      "style": {
+        "noNestedTernary": "off"
+      }
+    }
+  }
+}

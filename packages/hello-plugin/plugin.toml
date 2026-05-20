@@ -1,0 +1,15 @@
+[identity]
+name        = "hello-plugin"
+type        = "hello-plugin"
+version     = "0.1.0"
+publisher   = "tupiflow"
+description = "Minimal proof-of-life plugin for tupiflow-registry. Registers one tool and one route. No DB, no credentials, no capabilities."
+
+[runtime]
+min_tupiflow_version = "0.0.0"
+
+[icon]
+kind = "svg"
+path = "icon.svg"
+
+capabilities = []
