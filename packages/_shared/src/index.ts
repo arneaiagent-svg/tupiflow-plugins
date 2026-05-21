@@ -11,6 +11,10 @@ export type {
 } from "./build-helpers.ts";
 
 export type {
+  ChatAttachment,
+  ChatMessageEvent,
+  ConnectionInstance,
+  ConnectionSpec,
   HttpMethod,
   IntegrationSpec,
   LlmCallArgs,

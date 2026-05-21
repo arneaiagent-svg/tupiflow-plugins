@@ -14,7 +14,13 @@
 // checks if anyone enables them; `usage` is `unknown` to avoid runtime
 // import side-effects.
 
-import type { PluginHostAPI, RouteContext, StepResult } from "./host-api-types.ts";
+import type {
+  ChatMessageEvent,
+  ConnectionInstance,
+  PluginHostAPI,
+  RouteContext,
+  StepResult,
+} from "./host-api-types.ts";
 
 // biome-ignore lint/correctness/noUnusedVariables: type-level fixture
 async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
@@ -75,6 +81,43 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   void text;
   api.logger.warn("done");
   api.logger.error("done", { context: "fixture" });
+
+  // Phase 4a.2 — connection lifecycle + workflow dispatch
+  api.registerConnection({
+    startInstance: async ({
+      integrationId,
+      config,
+    }): Promise<ConnectionInstance> => {
+      void config;
+      return {
+        integrationId,
+        handle: { opaque: true },
+        shutdown: async () => {
+          /* tear down */
+        },
+      };
+    },
+    buildThreadJson: (chatId: string) => ({ adapterName: "fixture", chatId }),
+    replyActionId: "fixture/send-reply",
+  });
+
+  const event: ChatMessageEvent = {
+    integrationId: "int-1",
+    text: "hi",
+    threadJson: { id: "fixture:1" },
+    isDM: true,
+    isMention: false,
+    channelId: "ch-1",
+    threadId: "fixture:1",
+    userName: "alice",
+    arrivalAt: Date.now(),
+    imageUrls: [],
+    fileUrls: [],
+    audioUrls: [],
+    videoUrls: [],
+  };
+  const dispatched: { executionId: string } | null = await api.dispatchToWorkflow(event);
+  void dispatched;
 }
 
 export const __fixtureMarker = true;
