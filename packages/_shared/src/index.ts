@@ -42,6 +42,7 @@ export type {
   ManifestIconLucide,
   ManifestIconSvg,
   ManifestIdentity,
+  ManifestRequiredExtension,
   ManifestRoute,
   ManifestRuntime,
   ManifestSchemaBlock,

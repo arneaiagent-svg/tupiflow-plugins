@@ -28,6 +28,7 @@ import type {
   Manifest,
   ManifestAction,
   ManifestCredential,
+  ManifestRequiredExtension,
   ManifestRoute,
   ManifestSchemaBlock,
 } from "./manifest-types.ts";
@@ -45,6 +46,13 @@ export type BuildPluginOptions = {
    * Each path is also recorded in `manifest.schema.migrations` when present.
    */
   migrations?: string[];
+  /**
+   * Postgres extensions the plugin requires. Emitted as
+   * `manifest.requiredExtensions` for the customer-side installer's
+   * `CREATE EXTENSION IF NOT EXISTS` pre-step. v1 allowlist enforced by the
+   * registry validator: `pgvector`, `timescaledb`, `timescaledb_toolkit`.
+   */
+  requiredExtensions?: ManifestRequiredExtension[];
 };
 
 export type BuildPluginResult = {
@@ -144,6 +152,9 @@ export async function buildPlugin(
     ...(opts.credentials ? { credentials: opts.credentials } : {}),
     actions,
     ...(opts.routes ? { routes: opts.routes } : {}),
+    ...(opts.requiredExtensions && opts.requiredExtensions.length > 0
+      ? { requiredExtensions: opts.requiredExtensions }
+      : {}),
     bundle: {
       // Provisional values; patched after tar below. Server is authoritative.
       // sizeBytes is a non-zero placeholder so the embedded-in-tarball

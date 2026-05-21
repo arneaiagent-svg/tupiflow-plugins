@@ -68,6 +68,18 @@ export type ManifestBundle = {
   sizeBytes: number;
 };
 
+/**
+ * Postgres extensions the plugin depends on. The customer-side installer runs
+ * `CREATE EXTENSION IF NOT EXISTS <name>` per entry inside the install
+ * transaction (defense-in-depth — extensions are pre-installed by the
+ * operator). v1 allowlist (registry `manifest/schema.json`): `pgvector`,
+ * `timescaledb`, `timescaledb_toolkit`. Names only — never pin a version.
+ */
+export type ManifestRequiredExtension =
+  | "pgvector"
+  | "timescaledb"
+  | "timescaledb_toolkit";
+
 export type Manifest = {
   identity: ManifestIdentity;
   runtime: ManifestRuntime;
@@ -78,5 +90,6 @@ export type Manifest = {
   credentials?: ManifestCredential[];
   actions: ManifestAction[];
   routes?: ManifestRoute[];
+  requiredExtensions?: ManifestRequiredExtension[];
   bundle: ManifestBundle;
 };
