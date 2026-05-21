@@ -35,6 +35,12 @@ importers:
         specifier: workspace:*
         version: link:../_shared
 
+  packages/telegram:
+    dependencies:
+      '@tupiflow-plugins/shared':
+        specifier: workspace:*
+        version: link:../_shared
+
 packages:
 
   '@babel/runtime@7.29.2':

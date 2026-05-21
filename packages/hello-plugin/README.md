@@ -26,11 +26,11 @@ Output lands in `packages/hello-plugin/dist/`:
 
 Publish wiring (`pnpm publish-all`) is stubbed until the first end-to-end
 publish from the monorepo is wired up (probably alongside the telegram port).
-For now, publish manually via tupiflow-registry-cli:
+For now, publish manually via tfr:
 
 ```bash
 TUPIFLOW_REGISTRY_TOKEN=tfr_... \
-  tupiflow-registry-cli publish \
+  tfr publish \
     --manifest dist/manifest.json \
     --bundle dist/bundle.tgz
 ```

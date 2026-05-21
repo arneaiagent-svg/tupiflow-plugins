@@ -20,7 +20,7 @@ See `packages/hello-plugin/` for reference.
 
 - `pnpm build` builds every package (filter via pnpm if needed).
 - `pnpm publish-all` publishes every bumped package to the registry via
-  tupiflow-registry-cli.
+  tfr.
 - No GitHub Actions; use `scripts/check.sh` locally.
 
 ## Conventions
