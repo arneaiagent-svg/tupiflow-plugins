@@ -99,9 +99,36 @@ export type EmbedResult = {
 
 /**
  * Database accessor. Both `read` and `write` execute inside a transaction
- * the host scopes to `plugin_<name>` via `SET LOCAL search_path`. The
- * `params` slot is reserved; the host currently rejects non-empty params
- * (inline values into `rawSql` until parameterized queries land).
+ * the host scopes to `plugin_<name>` via `SET LOCAL search_path`. The plugin
+ * never sees tables outside its own schema; SET LOCAL is per-tx and never
+ * leaks across pool borrows (verified by host e2e against real Postgres).
+ *
+ * Use `$1, $2, ...` placeholders in `rawSql` and pass the matching values
+ * positionally in `params`. The host forwards the array straight to the
+ * underlying Postgres driver (`postgres-js` `.unsafe(rawSql, params)`); there
+ * is NO host-side escape or sanitization layer.
+ *
+ * What `$N` binding DOES handle:
+ * - Strings, numbers, booleans, `null`, `Date`, `Buffer` — passed through
+ *   to postgres-js's native encoder.
+ * - JS arrays mapped to PostgreSQL array literals when the column is an
+ *   array type.
+ * - SQL-injection-safe escaping of every bound VALUE.
+ *
+ * What `$N` binding DOES NOT handle — plugin author responsibility:
+ * - `jsonb` / `json` columns. `postgres-js`'s `unsafe()` path does NOT
+ *   auto-serialize JS objects (that auto-serializer lives on the tagged-
+ *   template `sql\`\`` API which this surface bypasses to preserve the
+ *   caller's `$N` numbering). Pre-`JSON.stringify` the object and cast in
+ *   SQL: `INSERT … VALUES ($1, $2::jsonb)`. Reads return jsonb as
+ *   already-parsed JS objects (the postgres-js receive path DOES parse).
+ * - `ILIKE` pattern semantics. Binding escapes `'` in a value; it does
+ *   not escape the LIKE/ILIKE meta-chars `%`, `_`, `\`. If the value is a
+ *   user-supplied search term used in `WHERE col ILIKE $1`, escape the
+ *   meta-chars on the plugin side first.
+ * - Application-level type validation. Validate every value's shape
+ *   (length cap, JSON schema, etc.) at the boundary before binding —
+ *   `$N` only handles SQL safety, not whether the value belongs there.
  */
 export type PluginDb = {
   read<T = unknown>(rawSql: string, params?: unknown[]): Promise<T[]>;
