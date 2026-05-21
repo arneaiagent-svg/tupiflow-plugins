@@ -179,6 +179,19 @@ export type PluginHostAPI = {
     call(args: LlmCallArgs): Promise<LlmCallResult>;
   };
   logger: PluginLogger;
+  /**
+   * Absolute public URL of the customer's tupiflow host (no trailing slash),
+   * e.g. `https://app.acme.com`. Sourced from the env var
+   * `TUPIFLOW_PUBLIC_BASE_URL` (falls back to `BETTER_AUTH_URL`). Plugins use
+   * this to build absolute callback URLs handed to upstream services — most
+   * commonly the webhook URL passed to a provider's `setWebhook`-style API
+   * from `startInstance`.
+   *
+   * Empty string if neither env var is set. Plugins that depend on this MUST
+   * check for empty and fail loudly in `startInstance` so misconfiguration is
+   * visible at integration save time rather than at first inbound event.
+   */
+  publicBaseUrl: string;
   registerIntegration(spec: IntegrationSpec): void;
   registerRoute(method: HttpMethod, path: string, handler: RouteHandler): void;
   /**

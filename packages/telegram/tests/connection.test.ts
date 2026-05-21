@@ -9,22 +9,58 @@ import {
 } from "../src/connection.ts";
 import { createInstanceRegistry } from "../src/webhook.ts";
 
+interface FetchCall {
+  url: string;
+  method: string;
+  body: unknown;
+}
+
 interface MockApi {
   api: PluginHostAPI;
   fetchCredentialsCalls: string[];
+  fetchCalls: FetchCall[];
 }
 
-function makeApi(creds: Record<string, string | undefined>): MockApi {
+function makeApi(args: {
+  creds: Record<string, string | undefined>;
+  publicBaseUrl?: string;
+  telegramResponse?: () => Response;
+}): MockApi {
   const fetchCredentialsCalls: string[] = [];
+  const fetchCalls: FetchCall[] = [];
   const api: PluginHostAPI = {
     db: { read: async () => [], write: async () => {} },
-    fetch: (async () => new Response("{}")) as PluginHostAPI["fetch"],
+    fetch: (async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const method = init?.method ?? "GET";
+      let parsedBody: unknown = null;
+      if (typeof init?.body === "string") {
+        try {
+          parsedBody = JSON.parse(init.body);
+        } catch {
+          parsedBody = init.body;
+        }
+      }
+      fetchCalls.push({ url, method, body: parsedBody });
+      return args.telegramResponse
+        ? args.telegramResponse()
+        : new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+    }) as PluginHostAPI["fetch"],
     fetchCredentials: async (id: string) => {
       fetchCredentialsCalls.push(id);
-      return creds;
+      return args.creds;
     },
     llm: { call: async () => ({ text: "" }) },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
+    publicBaseUrl: args.publicBaseUrl ?? "",
     registerIntegration: () => {},
     registerRoute: () => {},
     registerStep: () => {},
@@ -32,11 +68,13 @@ function makeApi(creds: Record<string, string | undefined>): MockApi {
     registerConnection: () => {},
     dispatchToWorkflow: async () => null,
   };
-  return { api, fetchCredentialsCalls };
+  return { api, fetchCredentialsCalls, fetchCalls };
 }
 
 test("startInstance calls fetchCredentials with the integrationId", async () => {
-  const { api, fetchCredentialsCalls } = makeApi({ botToken: "T" });
+  const { api, fetchCredentialsCalls } = makeApi({
+    creds: { TELEGRAM_BOT_API_KEY: "T" },
+  });
   const registry = createInstanceRegistry();
   const startInstance = makeStartInstance({ api, registry });
   const instance = await startInstance({
@@ -48,8 +86,8 @@ test("startInstance calls fetchCredentials with the integrationId", async () => 
   assert.equal(instance.integrationId, "int-1");
 });
 
-test("startInstance reads TELEGRAM_BOT_API_KEY as a fallback credential key", async () => {
-  const { api } = makeApi({ TELEGRAM_BOT_API_KEY: "ABC" });
+test("startInstance reads the verbatim TELEGRAM_BOT_API_KEY credential", async () => {
+  const { api } = makeApi({ creds: { TELEGRAM_BOT_API_KEY: "ABC" } });
   const registry = createInstanceRegistry();
   const startInstance = makeStartInstance({ api, registry });
   const instance = await startInstance({
@@ -60,8 +98,8 @@ test("startInstance reads TELEGRAM_BOT_API_KEY as a fallback credential key", as
   assert.equal(handle.botToken, "ABC");
 });
 
-test("startInstance throws when no bot token credential is present", async () => {
-  const { api } = makeApi({});
+test("startInstance throws when TELEGRAM_BOT_API_KEY credential is missing", async () => {
+  const { api } = makeApi({ creds: {} });
   const registry = createInstanceRegistry();
   const startInstance = makeStartInstance({ api, registry });
   await assert.rejects(
@@ -69,12 +107,12 @@ test("startInstance throws when no bot token credential is present", async () =>
       integrationId: "int-3",
       config: { webhookSecret: "x", botUsername: "" },
     }),
-    /missing botToken/
+    /TELEGRAM_BOT_API_KEY/
   );
 });
 
 test("startInstance populates the per-integration registry with webhook secret", async () => {
-  const { api } = makeApi({ botToken: "T" });
+  const { api } = makeApi({ creds: { TELEGRAM_BOT_API_KEY: "T" } });
   const registry = createInstanceRegistry();
   const startInstance = makeStartInstance({ api, registry });
   await startInstance({
@@ -87,8 +125,52 @@ test("startInstance populates the per-integration registry with webhook secret",
   assert.equal(state.botUsername, "my_bot");
 });
 
-test("shutdown removes the integration from the registry", async () => {
-  const { api } = makeApi({ botToken: "T" });
+test("startInstance calls telegram-api setWebhook when publicBaseUrl is set", async () => {
+  const { api, fetchCalls } = makeApi({
+    creds: { TELEGRAM_BOT_API_KEY: "TOK" },
+    publicBaseUrl: "https://app.example.com",
+  });
+  const registry = createInstanceRegistry();
+  const startInstance = makeStartInstance({ api, registry });
+  const instance = await startInstance({
+    integrationId: "int-wh",
+    config: { webhookSecret: "shh", botUsername: "" },
+  });
+  const setWebhook = fetchCalls.find((c) => c.url.endsWith("/setWebhook"));
+  assert.ok(setWebhook, "setWebhook should have been called");
+  assert.equal(
+    setWebhook.url,
+    "https://api.telegram.org/botTOK/setWebhook"
+  );
+  assert.deepEqual(setWebhook.body, {
+    url: "https://app.example.com/plugins/telegram/webhook/int-wh",
+    secret_token: "shh",
+  });
+  const handle = instance.handle as { webhookAutoRegistered: boolean };
+  assert.equal(handle.webhookAutoRegistered, true);
+});
+
+test("startInstance skips setWebhook when publicBaseUrl is empty", async () => {
+  const { api, fetchCalls } = makeApi({
+    creds: { TELEGRAM_BOT_API_KEY: "TOK" },
+    publicBaseUrl: "",
+  });
+  const registry = createInstanceRegistry();
+  const startInstance = makeStartInstance({ api, registry });
+  const instance = await startInstance({
+    integrationId: "int-skip",
+    config: { webhookSecret: "x", botUsername: "" },
+  });
+  assert.equal(fetchCalls.length, 0);
+  const handle = instance.handle as { webhookAutoRegistered: boolean };
+  assert.equal(handle.webhookAutoRegistered, false);
+});
+
+test("shutdown removes the integration from the registry and calls deleteWebhook", async () => {
+  const { api, fetchCalls } = makeApi({
+    creds: { TELEGRAM_BOT_API_KEY: "TOK" },
+    publicBaseUrl: "https://app.example.com",
+  });
   const registry = createInstanceRegistry();
   const startInstance = makeStartInstance({ api, registry });
   const instance = await startInstance({
@@ -96,8 +178,33 @@ test("shutdown removes the integration from the registry", async () => {
     config: { webhookSecret: "s", botUsername: "" },
   });
   assert.ok(registry.get("int-5"));
+  fetchCalls.length = 0;
   await instance.shutdown();
   assert.equal(registry.get("int-5"), undefined);
+  const deleteWebhook = fetchCalls.find((c) =>
+    c.url.endsWith("/deleteWebhook")
+  );
+  assert.ok(deleteWebhook, "deleteWebhook should be called on shutdown");
+  assert.equal(
+    deleteWebhook.url,
+    "https://api.telegram.org/botTOK/deleteWebhook"
+  );
+});
+
+test("shutdown does not call deleteWebhook when auto-register was skipped", async () => {
+  const { api, fetchCalls } = makeApi({
+    creds: { TELEGRAM_BOT_API_KEY: "TOK" },
+    publicBaseUrl: "",
+  });
+  const registry = createInstanceRegistry();
+  const startInstance = makeStartInstance({ api, registry });
+  const instance = await startInstance({
+    integrationId: "int-6",
+    config: { webhookSecret: "s", botUsername: "" },
+  });
+  fetchCalls.length = 0;
+  await instance.shutdown();
+  assert.equal(fetchCalls.length, 0);
 });
 
 test("buildTelegramThreadJson handles plain channel ids", () => {

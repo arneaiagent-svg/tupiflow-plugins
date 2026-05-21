@@ -22,13 +22,10 @@ source is gated on host-api surface that does not yet exist — see
 ## Capabilities
 
 - `net.fetch` — used by the send-reply step to call
-  `https://api.telegram.org/bot<token>/sendMessage`.
-
-`secrets.read` is intentionally **not** declared yet. While the shim
-now types `fetchCredentials` after Phase 4a.1, this port still accepts
-`botToken` on the step input as the M3a wire-through workaround. Add
-`secrets.read` and switch to `api.fetchCredentials` together once the
-wire format change is acceptable.
+  `https://api.telegram.org/bot<token>/sendMessage`, and by
+  `startInstance`/`shutdown` to call `setWebhook`/`deleteWebhook`.
+- `secrets.read` — bot token is read via `api.fetchCredentials`.
+- `connection.lifecycle` + `workflow.dispatch` — Phase 4a.2 surface.
 
 ## Credentials
 
@@ -36,6 +33,24 @@ wire format change is acceptable.
 | --- | --- |
 | `TELEGRAM_BOT_API_KEY` | Bot token from @BotFather. |
 | `TELEGRAM_WEBHOOK_SECRET` | Secret used to verify inbound webhook headers. |
+
+Keys are passed verbatim from the manifest's `[[credentials]]` block — no
+normalization. The plugin reads `creds.TELEGRAM_BOT_API_KEY` directly.
+This is the canonical contract for registry plugins; see
+tupiflow-registry `docs/MANIFEST.md` for the resolver rule.
+
+## Webhook URL registration
+
+`startInstance` auto-registers the inbound webhook URL with telegram-api
+when `TUPIFLOW_PUBLIC_BASE_URL` (or `BETTER_AUTH_URL`) is set on the
+tupiflow host. The URL is `<base>/plugins/telegram/webhook/<integrationId>`
+and the configured webhook secret is forwarded as `secret_token`.
+`shutdown` calls `deleteWebhook` so a removed integration stops receiving
+upstream pushes.
+
+When neither env var is set (air-gapped deployments), `startInstance`
+logs a warning and skips the call — operators then run `setWebhook`
+themselves against `<host>/plugins/telegram/webhook/<integrationId>`.
 
 ## Build
 
@@ -46,16 +61,10 @@ pnpm -F @tupiflow-plugins/telegram build
 Output in `dist/`: `bundle.mjs`, `manifest.json`, `icon.svg`,
 `bundle.tgz`.
 
-## Host-API gaps (block full parity, deferred to PLUGIN_TIERS Phase 4)
+## Host-API gaps (still open)
 
-1. Connection lifecycle (`startInstance`, `shutdown`,
-   `webhookHandler`, `buildThreadJson`) — the first-party plugin owns
-   a long-lived Telegram adapter (`@chat-adapter/telegram`) plus a
-   `Chat` from the `chat` library. The host-api has no equivalent
-   surface for long-lived per-integration handles. Phase 4a.2.
-2. Trigger dispatch (`dispatchToWorkflow(event)`) — the webhook route
-   currently 200s the payload but cannot kick off a workflow run.
-   Phase 4a.2.
+1. ~~Connection lifecycle~~ — closed in Phase 4a.2.
+2. ~~Trigger dispatch~~ — closed in Phase 4a.2.
 3. Chat takeover gate (`getHumanControl(integrationId, threadId)`) —
    not in the shim. The port drops the suppression branch.
 4. Per-thread persistence (`appendThreadMessages`,

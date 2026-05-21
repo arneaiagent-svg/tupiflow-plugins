@@ -3,7 +3,7 @@ capabilities = ["net.fetch", "secrets.read", "connection.lifecycle", "workflow.d
 [identity]
 name        = "telegram"
 type        = "telegram"
-version     = "0.2.0"
+version     = "0.3.0"
 publisher   = "tupiflow"
 description = "Telegram bot integration. Reply to chat threads and receive webhook updates."
 

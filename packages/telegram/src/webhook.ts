@@ -338,9 +338,10 @@ export function makeWebhookHandler(deps: WebhookHandlerDeps): RouteHandler {
 
     // Bot token is required to resolve file URLs. Plugin fetches creds at
     // dispatch time so a token rotation takes effect on the next webhook
-    // without restarting the connection.
+    // without restarting the connection. Verbatim manifest key per Phase
+    // 4a.2 Q6 Convention X.
     const creds = await api.fetchCredentials(integrationId);
-    const botToken = creds.botToken ?? creds.TELEGRAM_BOT_API_KEY ?? "";
+    const botToken = creds.TELEGRAM_BOT_API_KEY ?? "";
 
     const chatType = message.chat.type ?? "";
     const isDM = chatType === "private";

@@ -76,7 +76,7 @@ function makeApi(opts: {
     }) as PluginHostAPI["fetch"],
     fetchCredentials: async (id: string) => {
       fetchCredentialsCalls.push(id);
-      return { botToken };
+      return { TELEGRAM_BOT_API_KEY: botToken };
     },
     llm: { call: async () => ({ text: "" }) },
     logger: {
@@ -84,6 +84,7 @@ function makeApi(opts: {
       warn: () => {},
       error: () => {},
     },
+    publicBaseUrl: "",
     registerIntegration: () => {},
     registerRoute: () => {},
     registerStep: () => {},
