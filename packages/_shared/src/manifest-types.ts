@@ -69,6 +69,20 @@ export type ManifestBundle = {
 };
 
 /**
+ * Takeover target the plugin registers via `api.registerTakeoverTarget`.
+ * `actionId` is a plugin-namespaced step id (regex
+ * `^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*$`) that MUST match a registered step.
+ * Required to be non-empty when `capabilities` includes
+ * `takeover.register` (registry allOf enforces). See Phase 4e (tupiflow
+ * docs/registry/PHASE_4E_SEEDED_HOST_API.md §4.2).
+ */
+export type ManifestTakeoverTarget = {
+  actionId: string;
+  label: string;
+  description?: string;
+};
+
+/**
  * Postgres extensions the plugin depends on. The customer-side installer runs
  * `CREATE EXTENSION IF NOT EXISTS <name>` per entry inside the install
  * transaction (defense-in-depth — extensions are pre-installed by the
@@ -111,5 +125,24 @@ export type Manifest = {
   routes?: ManifestRoute[];
   requiredExtensions?: ManifestRequiredExtension[];
   customSql?: string[];
+  /**
+   * True when the plugin registers a dynamic tool-catalog contributor via
+   * `api.registerToolCatalogContributor` (Phase 4e §2.4). The host
+   * short-circuits non-contributor plugins during agent tool-list builds.
+   * Absence is semantically equivalent to false; the registry schema does
+   * NOT set a JSON-Schema default for this field — `json-schema-to-zod`
+   * 2.x would translate `default` into a mutating Zod default which would
+   * inject the field after parse and break the publish-time canonical-JSON
+   * hash on the consumer side (signature verify would fail). Required to
+   * be `true` when `capabilities` includes `tool-registry.contribute`
+   * (registry allOf enforces).
+   */
+  toolCatalogContributor?: boolean;
+  /**
+   * Takeover targets the plugin registers via `api.registerTakeoverTarget`
+   * (Phase 4e §2.5). Required to be non-empty when `capabilities`
+   * includes `takeover.register` (registry allOf enforces).
+   */
+  takeoverTargets?: ManifestTakeoverTarget[];
   bundle: ManifestBundle;
 };

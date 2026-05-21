@@ -78,7 +78,11 @@ function makeApi(opts: {
       fetchCredentialsCalls.push(id);
       return { TELEGRAM_BOT_API_KEY: botToken };
     },
-    llm: { call: async () => ({ text: "" }) },
+    llm: {
+      call: async () => ({ text: "" }),
+      embed: async () => ({ vector: [], dimensions: 1024, model: "" }),
+      embedBatch: async () => [],
+    },
     logger: {
       info: () => {},
       warn: () => {},
@@ -88,11 +92,24 @@ function makeApi(opts: {
     registerIntegration: () => {},
     registerRoute: () => {},
     registerStep: () => {},
+    registerRegistryStep: () => {},
     registerTool: () => {},
     registerConnection: () => {},
     dispatchToWorkflow: async (event) => {
       dispatchCalls.push({ event });
       return { executionId: "exec-1" };
+    },
+    // Phase 4e.2 stubs — webhook test does not exercise these surfaces.
+    registerTestHandler: () => {},
+    testIntegration: async () => ({ success: true }),
+    updateIntegrationConfig: async () => {},
+    registerToolCatalogContributor: () => {},
+    registerTakeoverTarget: () => {},
+    workflow: {
+      get: async () => null,
+      list: async () => ({ items: [], nextCursor: null }),
+      createExecution: async () => ({ executionId: "exec-1", status: "running" }),
+      getExecutionLogs: async () => [],
     },
   };
   return { api, fetchCalls, dispatchCalls, fetchCredentialsCalls };
@@ -123,6 +140,10 @@ function makeCtx(
         name === "integrationId" ? integrationId : "",
       raw: new Request("https://example.test/webhook", { method: "POST" }),
     },
+    // Phase 4e.2 §2.3 — telegram does not declare route.context.user so the
+    // host populates these with empty defaults. Mirror that in the stub.
+    userId: "",
+    abilities: [],
   };
   return { ctx, calls };
 }

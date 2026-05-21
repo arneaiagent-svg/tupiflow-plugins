@@ -58,15 +58,32 @@ function makeApi(args: {
       fetchCredentialsCalls.push(id);
       return args.creds;
     },
-    llm: { call: async () => ({ text: "" }) },
+    llm: {
+      call: async () => ({ text: "" }),
+      embed: async () => ({ vector: [], dimensions: 1024, model: "" }),
+      embedBatch: async () => [],
+    },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     publicBaseUrl: args.publicBaseUrl ?? "",
     registerIntegration: () => {},
     registerRoute: () => {},
     registerStep: () => {},
+    registerRegistryStep: () => {},
     registerTool: () => {},
     registerConnection: () => {},
     dispatchToWorkflow: async () => null,
+    // Phase 4e.2 stubs — connection test does not exercise these surfaces.
+    registerTestHandler: () => {},
+    testIntegration: async () => ({ success: true }),
+    updateIntegrationConfig: async () => {},
+    registerToolCatalogContributor: () => {},
+    registerTakeoverTarget: () => {},
+    workflow: {
+      get: async () => null,
+      list: async () => ({ items: [], nextCursor: null }),
+      createExecution: async () => ({ executionId: "exec-1", status: "running" }),
+      getExecutionLogs: async () => [],
+    },
   };
   return { api, fetchCredentialsCalls, fetchCalls };
 }

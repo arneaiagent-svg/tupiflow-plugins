@@ -17,11 +17,22 @@
 import type {
   ChatMessageEvent,
   ConnectionInstance,
+  CreateExecutionResult,
   EmbedArgs,
   EmbedResult,
+  ExecutionLogEntry,
+  IntegrationConfigPatch,
   PluginHostAPI,
+  RegistryStepInput,
   RouteContext,
   StepResult,
+  TakeoverTargetSpec,
+  TestIntegrationResult,
+  TestIntegrationSpec,
+  ToolCatalogContext,
+  ToolCatalogEntry,
+  Workflow,
+  WorkflowListPage,
 } from "./host-api-types.ts";
 
 // biome-ignore lint/correctness/noUnusedVariables: type-level fixture
@@ -52,17 +63,26 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   });
 
   // route registration — handler reads ctx.req.header / .json / .query / .param / .raw
+  // plus the Phase 4e.2 §2.3 RouteContext.userId / abilities additions
   api.registerRoute("POST", "/hook", async (ctx: RouteContext) => {
     const auth: string | undefined = ctx.req.header("authorization");
     const id: string = ctx.req.param("id");
     const limit: string | undefined = ctx.req.query("limit");
     const body: unknown = await ctx.req.json();
     const raw: Request = ctx.req.raw;
+    const callerId: string = ctx.userId;
+    const callerAbilities: string[] = ctx.abilities;
+    const canUpdateIntegration: boolean = ctx.abilities.includes(
+      "update:Integration",
+    );
     void auth;
     void id;
     void limit;
     void body;
     void raw;
+    void callerId;
+    void callerAbilities;
+    void canUpdateIntegration;
     return ctx.json({ ok: true }, 200);
   });
 
@@ -152,6 +172,102 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   };
   const dispatched: { executionId: string } | null = await api.dispatchToWorkflow(event);
   void dispatched;
+
+  // Phase 4e.2 §2.1 — testIntegration + registerTestHandler
+  api.registerTestHandler(async ({ integrationId, credentials, opts }) => {
+    void integrationId;
+    void credentials;
+    void opts;
+    const result: TestIntegrationResult = { success: true };
+    return result;
+  });
+  const testSpec: TestIntegrationSpec = {
+    integrationType: "fixture",
+    integrationId: "int-fixture-1",
+    opts: { testModelId: "gpt-4o" },
+  };
+  const testResult: TestIntegrationResult = await api.testIntegration(testSpec);
+  void testResult;
+
+  // Phase 4e.2 §2.2 — updateIntegrationConfig (deep-merge into pluginData)
+  const patch: IntegrationConfigPatch = {
+    pluginData: {
+      cachedTools: [{ name: "search", description: "do search" }],
+      toolsRefreshedAt: new Date().toISOString(),
+    },
+  };
+  await api.updateIntegrationConfig("int-fixture-1", patch);
+
+  // Phase 4e.2 §2.4 — registerToolCatalogContributor
+  api.registerToolCatalogContributor(
+    async (ctx: ToolCatalogContext): Promise<ToolCatalogEntry[]> => {
+      void ctx.userId;
+      void ctx.integrationId;
+      return [
+        {
+          entryKey: `${ctx.integrationId}:echo`,
+          actionId: `fixture:${ctx.integrationId}:echo`,
+          actionLabel: "Echo",
+          category: "Fixture",
+          integrationId: ctx.integrationId,
+          integrationLabel: "Fixture",
+          configured: true,
+          tool: {
+            name: "fixture__echo",
+            description: "Echo input back unchanged.",
+            inputSchemaJson: '{"type":"object"}',
+          },
+        },
+      ];
+    },
+  );
+
+  // Phase 4e.2 §2.5 — registerTakeoverTarget
+  const takeoverSpec: TakeoverTargetSpec = {
+    label: "Request human takeover",
+    description: "Hand the conversation over to a human operator.",
+  };
+  api.registerTakeoverTarget("fixture/request-human-takeover", takeoverSpec);
+
+  // Phase 4e.2 §2.6 — api.workflow.{get, list, createExecution, getExecutionLogs}
+  const workflow: Workflow | null = await api.workflow.get("wf-1");
+  if (workflow !== null) {
+    const ownerId: string = workflow.userId;
+    const nodeCount: number = workflow.nodes.length;
+    void ownerId;
+    void nodeCount;
+  }
+  const page: WorkflowListPage = await api.workflow.list({
+    userId: "user-1",
+    limit: 50,
+    cursor: undefined,
+  });
+  const items = page.items;
+  const nextCursor: string | null = page.nextCursor;
+  void items;
+  void nextCursor;
+  const exec: CreateExecutionResult = await api.workflow.createExecution({
+    workflowId: "wf-1",
+    input: { greeting: "hello" },
+  });
+  void exec;
+  const logs: ExecutionLogEntry[] = await api.workflow.getExecutionLogs(
+    exec.executionId,
+  );
+  void logs;
+
+  // Phase 4e.2 §2.7 — registerRegistryStep with the RegistryStepInput envelope
+  api.registerRegistryStep(
+    "fixture/registry-step",
+    async ({ api: stepApi, ctx }: RegistryStepInput): Promise<StepResult> => {
+      const workflowId: string = ctx.workflowId;
+      const userId: string = ctx.userId;
+      void workflowId;
+      void userId;
+      stepApi.logger.info("registry step invoked", { nodeId: ctx.nodeId });
+      return { success: true, data: ctx.input };
+    },
+  );
 }
 
 export const __fixtureMarker = true;
