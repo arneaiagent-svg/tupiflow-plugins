@@ -17,6 +17,8 @@
 import type {
   ChatMessageEvent,
   ConnectionInstance,
+  EmbedArgs,
+  EmbedResult,
   PluginHostAPI,
   RouteContext,
   StepResult,
@@ -81,6 +83,38 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   void text;
   api.logger.warn("done");
   api.logger.error("done", { context: "fixture" });
+
+  // Phase 4b — llm.embed + llm.embedBatch (gated on existing llm.call cap)
+  const embedOpts: EmbedArgs = {
+    model: "openai/text-embedding-3-small",
+    providerIntegrationId: "int-openai-1",
+  };
+  const embedResult: EmbedResult = await api.llm.embed("hello world", embedOpts);
+  const vector: number[] = embedResult.vector;
+  const dimensions: number = embedResult.dimensions;
+  const embedModel: string = embedResult.model;
+  void vector;
+  void dimensions;
+  void embedModel;
+
+  // also accept the zero-arg opts form
+  const embedNoOpts: EmbedResult = await api.llm.embed("just text");
+  void embedNoOpts;
+
+  const embedBatchResult: EmbedResult[] = await api.llm.embedBatch(
+    ["a", "b", "c"],
+    embedOpts,
+  );
+  const first: EmbedResult | undefined = embedBatchResult[0];
+  void first;
+
+  // construct a fake matching value to assert structural compat
+  const fakeEmbed: EmbedResult = {
+    vector: [0.1, 0.2, 0.3],
+    dimensions: 1024,
+    model: "openai/text-embedding-3-small",
+  };
+  void fakeEmbed;
 
   // Phase 4a.2 — connection lifecycle + workflow dispatch
   api.registerConnection({

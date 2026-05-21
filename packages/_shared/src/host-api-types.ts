@@ -75,6 +75,29 @@ export type LlmCallResult = {
 };
 
 /**
+ * Embedding call arguments. `model` overrides the host default for the
+ * call; `providerIntegrationId` is required when `model` is set and the
+ * host cannot infer the provider from the customer's default config.
+ */
+export type EmbedArgs = {
+  model?: string;
+  providerIntegrationId?: string;
+};
+
+/**
+ * Embedding call result.
+ *
+ * `dimensions` is informational in v0 — always `EMBEDDING_DIM` (1024).
+ * The field is reserved for v1 per-plugin column allocation (see design
+ * doc PHASE_4B_HOST_GAPS.md §1.4).
+ */
+export type EmbedResult = {
+  vector: number[];
+  dimensions: number;
+  model: string;
+};
+
+/**
  * Database accessor. Both `read` and `write` execute inside a transaction
  * the host scopes to `plugin_<name>` via `SET LOCAL search_path`. The
  * `params` slot is reserved; the host currently rejects non-empty params
@@ -177,6 +200,26 @@ export type PluginHostAPI = {
   ): Promise<Record<string, string | undefined>>;
   llm: {
     call(args: LlmCallArgs): Promise<LlmCallResult>;
+    /**
+     * Compute an embedding for a single string. Gated on the existing
+     * `llm.call` capability — no new capability is introduced (see
+     * PHASE_4B_HOST_GAPS.md §1.2). `EmbedResult.dimensions` is
+     * informational in v0 and always equals `EMBEDDING_DIM` (1024);
+     * the field is reserved for v1 per-plugin column allocation
+     * (PHASE_4B_HOST_GAPS.md §1.4).
+     */
+    embed(text: string, opts?: EmbedArgs): Promise<EmbedResult>;
+    /**
+     * Compute embeddings for a batch of strings. Gated on the existing
+     * `llm.call` capability — no new capability is introduced (see
+     * PHASE_4B_HOST_GAPS.md §1.2). The host forwards to its native
+     * batched embedding path; prefer this over looping `embed()` when
+     * embedding more than one value. `EmbedResult.dimensions` is
+     * informational in v0 and always equals `EMBEDDING_DIM` (1024);
+     * the field is reserved for v1 per-plugin column allocation
+     * (PHASE_4B_HOST_GAPS.md §1.4).
+     */
+    embedBatch(values: string[], opts?: EmbedArgs): Promise<EmbedResult[]>;
   };
   logger: PluginLogger;
   /**

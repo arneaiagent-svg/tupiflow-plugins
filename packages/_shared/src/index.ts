@@ -15,6 +15,8 @@ export type {
   ChatMessageEvent,
   ConnectionInstance,
   ConnectionSpec,
+  EmbedArgs,
+  EmbedResult,
   HttpMethod,
   IntegrationSpec,
   LlmCallArgs,
