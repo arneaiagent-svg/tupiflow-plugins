@@ -93,11 +93,17 @@ await buildPlugin({
             splitBubbles: { type: "string" },
             bubbleDelayMs: { type: ["string", "number"] },
           },
-          required: ["text", "integrationId", "botToken"],
+          required: ["text", "integrationId"],
           additionalProperties: false,
         }),
       },
     },
   ],
-  routes: [{ method: "POST", path: "/webhook", handlerExport: "telegramWebhookHandler" }],
+  routes: [
+    {
+      method: "POST",
+      path: "/webhook/:integrationId",
+      handlerExport: "telegramWebhookHandler",
+    },
+  ],
 });

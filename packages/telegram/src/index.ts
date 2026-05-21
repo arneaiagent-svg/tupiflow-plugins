@@ -1,14 +1,20 @@
 // telegram — registry plugin port of plugins/telegram from the tupiflow
-// first-party tree. Surface is intentionally minimal: integration spec,
-// send-reply step, send-reply tool, webhook route. Full feature parity
-// (chat-takeover suppression, thread persistence, attachment ingestion,
-// long-poll connection lifecycle, telemetry) is blocked on host-api
-// surface that does not yet exist — see README for the gap list.
+// first-party tree. Now wires the Phase 4a.2 connection lifecycle surface:
+// `api.registerConnection` for startInstance / shutdown and
+// `api.dispatchToWorkflow` for inbound message routing.
+//
+// Webhook URL moves to /plugins/telegram/webhook/<integrationId>. Customers
+// must update their Telegram setWebhook call to the new path; see the
+// per-plugin migration script (PLUGIN_TIERS.md Phase 3 step 6).
 
 import type { PluginHostAPI } from "@tupiflow-plugins/shared/host-api-types";
 
+import {
+  buildTelegramThreadJson,
+  makeStartInstance,
+} from "./connection.ts";
 import { runSendReply, type SendReplyInput } from "./send-reply.ts";
-import { makeWebhookHandler } from "./webhook.ts";
+import { createInstanceRegistry, makeWebhookHandler } from "./webhook.ts";
 
 const SEND_REPLY_TOOL_INPUT_SCHEMA = {
   type: "object",
@@ -16,7 +22,7 @@ const SEND_REPLY_TOOL_INPUT_SCHEMA = {
     botToken: {
       type: "string",
       description:
-        "Telegram bot token. Until host-api fetchCredentials lands, pass it on the input.",
+        "Telegram bot token. Optional when running inside a registered connection — the step will fetchCredentials by integrationId.",
     },
     integrationId: {
       type: "string",
@@ -51,7 +57,7 @@ const SEND_REPLY_TOOL_INPUT_SCHEMA = {
       description: "Delay between bubbles in milliseconds when splitBubbles is on. Default 700.",
     },
   },
-  required: ["text", "integrationId", "botToken"],
+  required: ["text", "integrationId"],
   additionalProperties: false,
 };
 
@@ -102,6 +108,17 @@ export function registerPlugin(api: PluginHostAPI): void {
     return runSendReply(input as SendReplyInput);
   });
 
+  // Default `replyActionId` (`telegram/send-reply`) matches the convention
+  // `connection-dispatch-graph.ts` falls back to, so we also register the
+  // step under that exact id for the auto-generated default workflow.
+  api.registerStep("telegram/send-reply", async (input: unknown) => {
+    // The default workflow binds { text, integrationId, threadJson } — the
+    // shape `runSendReply` already accepts. The botToken slot is left blank;
+    // a future revision will let send-reply call fetchCredentials internally
+    // (mirrors first-party connection.ts:245 path).
+    return runSendReply(input as SendReplyInput);
+  });
+
   api.registerTool(
     "telegram_send_reply",
     SEND_REPLY_TOOL_INPUT_SCHEMA,
@@ -114,9 +131,23 @@ export function registerPlugin(api: PluginHostAPI): void {
     }
   );
 
+  // Phase 4a.2 — connection lifecycle + workflow dispatch.
+  // Per-plugin instance registry holds webhook secret + bot username for
+  // every active integration so the webhook route can authenticate without
+  // re-reading credentials on every request.
+  const registry = createInstanceRegistry();
+
+  api.registerConnection({
+    startInstance: makeStartInstance({ api, registry }),
+    buildThreadJson: buildTelegramThreadJson,
+    // omit replyActionId — `${integrationType}/send-reply` is the default and
+    // matches what the first-party plugin already registers
+    // (`tupiflow/plugins/telegram/connection.ts:582`).
+  });
+
   api.registerRoute(
     "POST",
-    "/webhook",
-    makeWebhookHandler({ expectedSecret: process.env.TELEGRAM_WEBHOOK_SECRET })
+    "/webhook/:integrationId",
+    makeWebhookHandler({ api, registry })
   );
 }
