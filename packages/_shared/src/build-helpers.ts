@@ -50,7 +50,9 @@ export type BuildPluginOptions = {
    * Postgres extensions the plugin requires. Emitted as
    * `manifest.requiredExtensions` for the customer-side installer's
    * `CREATE EXTENSION IF NOT EXISTS` pre-step. v1 allowlist enforced by the
-   * registry validator: `pgvector`, `timescaledb`, `timescaledb_toolkit`.
+   * registry validator: `vector`, `timescaledb`, `timescaledb_toolkit`. These
+   * are real Postgres extension names — pgvector ships as PG extension
+   * `vector`.
    */
   requiredExtensions?: ManifestRequiredExtension[];
 };

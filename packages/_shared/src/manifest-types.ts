@@ -72,11 +72,14 @@ export type ManifestBundle = {
  * Postgres extensions the plugin depends on. The customer-side installer runs
  * `CREATE EXTENSION IF NOT EXISTS <name>` per entry inside the install
  * transaction (defense-in-depth — extensions are pre-installed by the
- * operator). v1 allowlist (registry `manifest/schema.json`): `pgvector`,
- * `timescaledb`, `timescaledb_toolkit`. Names only — never pin a version.
+ * operator). v1 allowlist (registry `manifest/schema.json`): `vector`,
+ * `timescaledb`, `timescaledb_toolkit`. These are the real Postgres extension
+ * names — the pgvector project installs as the literal PG name `vector`
+ * (`pgvector` is the GitHub repo name, NOT the extension name). Names only —
+ * never pin a version.
  */
 export type ManifestRequiredExtension =
-  | "pgvector"
+  | "vector"
   | "timescaledb"
   | "timescaledb_toolkit";
 
