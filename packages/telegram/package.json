@@ -1,0 +1,14 @@
+{
+  "name": "@tupiflow-plugins/telegram",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "type-check": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.ts"
+  },
+  "dependencies": {
+    "@tupiflow-plugins/shared": "workspace:*"
+  }
+}

@@ -1,0 +1,15 @@
+capabilities = ["net.fetch"]
+
+[identity]
+name        = "telegram"
+type        = "telegram"
+version     = "0.1.2"
+publisher   = "tupiflow"
+description = "Telegram bot integration. Reply to chat threads and receive webhook updates."
+
+[runtime]
+min_tupiflow_version = "0.0.0"
+
+[icon]
+kind = "svg"
+path = "icon.svg"
