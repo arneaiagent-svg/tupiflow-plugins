@@ -83,6 +83,22 @@ export type ManifestRequiredExtension =
   | "timescaledb"
   | "timescaledb_toolkit";
 
+/**
+ * Custom SQL files applied at install time, AFTER `requiredExtensions`
+ * `CREATE EXTENSION` and INSTEAD OF `schema.migrations`. Use when the
+ * migration needs to reference extension-owned types/operators that the
+ * per-plugin `SET LOCAL search_path` cannot resolve (e.g. pgvector's
+ * `public.vector(N)` type), declare extensions inline for self-contained
+ * re-apply, or run otherwise unrestricted DDL (hypertables, CAGGs,
+ * compression/retention policies).
+ *
+ * Paths are relative to the plugin root and MUST match the registry regex
+ * `^custom-sql/[0-9]{4,}_[a-z0-9_]+\.sql$`. Statements inside the file are
+ * split on the `--> statement-breakpoint` marker.
+ *
+ * Plugins declaring a non-empty `customSql` MUST include the `db.custom_sql`
+ * capability (registry allOf clause).
+ */
 export type Manifest = {
   identity: ManifestIdentity;
   runtime: ManifestRuntime;
@@ -94,5 +110,6 @@ export type Manifest = {
   actions: ManifestAction[];
   routes?: ManifestRoute[];
   requiredExtensions?: ManifestRequiredExtension[];
+  customSql?: string[];
   bundle: ManifestBundle;
 };

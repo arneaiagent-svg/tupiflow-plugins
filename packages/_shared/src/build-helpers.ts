@@ -55,7 +55,18 @@ export type BuildPluginOptions = {
    * `vector`.
    */
   requiredExtensions?: ManifestRequiredExtension[];
+  /**
+   * Custom SQL files to apply at install (instead of `schema.migrations`).
+   * Paths relative to `root`. Each path MUST match
+   * `^custom-sql/[0-9]{4,}_[a-z0-9_]+\.sql$` (registry schema regex).
+   * Files are copied into `distDir/<path>` and added to the tarball; paths
+   * are recorded on `manifest.customSql`. Plugins using this option MUST
+   * include the `db.custom_sql` capability in `plugin.toml`.
+   */
+  customSql?: string[];
 };
+
+const CUSTOM_SQL_PATH_RE = /^custom-sql\/[0-9]{4,}_[a-z0-9_]+\.sql$/;
 
 export type BuildPluginResult = {
   manifest: Manifest;
@@ -121,6 +132,26 @@ export async function buildPlugin(
     }
   }
 
+  if (opts.customSql && opts.customSql.length > 0) {
+    if (!toml.capabilities?.includes("db.custom_sql")) {
+      throw new Error(
+        `buildPlugin: customSql is non-empty but plugin.toml capabilities does not include "db.custom_sql" (registry allOf clause will reject).`
+      );
+    }
+    await mkdir(resolve(distDir, "custom-sql"), { recursive: true });
+    for (const p of opts.customSql) {
+      if (!CUSTOM_SQL_PATH_RE.test(p)) {
+        throw new Error(
+          `buildPlugin: customSql path "${p}" does not match registry regex ^custom-sql/[0-9]{4,}_[a-z0-9_]+\\.sql$`
+        );
+      }
+      const dst = resolve(distDir, p);
+      await mkdir(resolve(dst, ".."), { recursive: true });
+      await copyFile(resolve(root, p), dst);
+      tarEntries.push(p);
+    }
+  }
+
   const bundleBytes = await readFile(bundlePath);
   const bundleMjsSha = createHash("sha256").update(bundleBytes).digest("hex");
 
@@ -156,6 +187,9 @@ export async function buildPlugin(
     ...(opts.routes ? { routes: opts.routes } : {}),
     ...(opts.requiredExtensions && opts.requiredExtensions.length > 0
       ? { requiredExtensions: opts.requiredExtensions }
+      : {}),
+    ...(opts.customSql && opts.customSql.length > 0
+      ? { customSql: opts.customSql }
       : {}),
     bundle: {
       // Provisional values; patched after tar below. Server is authoritative.
