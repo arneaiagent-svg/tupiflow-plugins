@@ -865,9 +865,11 @@ export interface ConnectionSendReplySpec {
    * Thread context. If omitted, the host resolves the row default
    * threadJson from connection_thread_history (latest by updatedAt).
    * Plugins that already loaded a row should pass it through to avoid
-   * the extra DB read.
+   * the extra DB read. Typed `unknown` to match the adapter-JSON shape
+   * exposed elsewhere (`ChatMessageEvent.threadJson`, `RegistryStepContext.threadJson`);
+   * host accepts string or object and serializes as needed.
    */
-  threadJson?: string;
+  threadJson?: unknown;
   /** Message text. Required, non-empty after trim. */
   text: string;
 }
@@ -888,7 +890,12 @@ export interface LaunchAgentOpts {
   modelOverride?: string;
   /** If launching inside an active thread, pass through. */
   connectionIntegrationId?: string;
-  connectionThreadJson?: string;
+  /**
+   * Adapter-JSON thread context. Typed `unknown` to match
+   * `ChatMessageEvent.threadJson` / `RegistryStepContext.threadJson`;
+   * host accepts string or object and serializes as needed.
+   */
+  connectionThreadJson?: unknown;
   /** Hard cap on tool-call iterations. Default/max enforced by host. */
   maxToolSteps?: number;
 }
