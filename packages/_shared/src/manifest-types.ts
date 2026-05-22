@@ -5,6 +5,8 @@
 // monorepo self-contained. Keep field set in lockstep with
 // tupiflow-registry/docs/MANIFEST.md.
 
+import type { WorkerSpec } from "./host-api-types.ts";
+
 export type ManifestIdentity = {
   name: string;
   type: string;
@@ -144,5 +146,15 @@ export type Manifest = {
    * includes `takeover.register` (registry allOf enforces).
    */
   takeoverTargets?: ManifestTakeoverTarget[];
+  /**
+   * Plugin-defined workers (Phase 4f batch 1). Each entry becomes a separate
+   * ESM bundle under `workers/<id>.mjs`, built alongside the main bundle by
+   * `buildPlugin`. The host's worker pool spawns these via `api.runTask(id,
+   * input)`. Required to be non-empty when `capabilities` includes
+   * `worker.run` (registry allOf enforces). See
+   * tupiflow/docs/registry/PHASE_4F_PLUGIN_DEPS_AND_WORKERS.md for the
+   * full design (isolation model, resource limits, capability gating).
+   */
+  workers?: WorkerSpec[];
   bundle: ManifestBundle;
 };

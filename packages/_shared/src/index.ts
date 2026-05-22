@@ -4,12 +4,18 @@
 // the subpath exports (e.g. "@tupiflow-plugins/shared/build-helpers") and
 // only use this entrypoint when they really need a single import line.
 
-export { buildPlugin } from "./build-helpers.ts";
+export { BLESSED_HOST_MODULES, buildPlugin } from "./build-helpers.ts";
 export type {
   BuildPluginOptions,
   BuildPluginResult,
+  WorkerBuildOutput,
 } from "./build-helpers.ts";
 
+export {
+  WorkerCapabilityDeniedError,
+  WorkerNotFoundError,
+  WorkerTimeoutError,
+} from "./host-api-types.ts";
 export type {
   AgentCreateSpec,
   AgentListFilter,
@@ -52,6 +58,7 @@ export type {
   ToolCatalogEntry,
   ToolHandler,
   Workflow,
+  WorkerSpec,
   WorkflowCreateSpec,
   WorkflowListItem,
   WorkflowListOpts,

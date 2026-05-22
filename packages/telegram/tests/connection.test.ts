@@ -114,6 +114,8 @@ function makeApi(args: {
     connections: {
       types: async () => [],
     },
+    // Phase 4f batch 1 stub — connection test does not exercise runTask.
+    runTask: async () => null,
   };
   return { api, fetchCredentialsCalls, fetchCalls };
 }

@@ -14,6 +14,11 @@
 // checks if anyone enables them; `usage` is `unknown` to avoid runtime
 // import side-effects.
 
+import {
+  WorkerCapabilityDeniedError,
+  WorkerNotFoundError,
+  WorkerTimeoutError,
+} from "./host-api-types.ts";
 import type {
   AgentCreateSpec,
   AgentListItem,
@@ -36,6 +41,7 @@ import type {
   TestIntegrationSpec,
   ToolCatalogContext,
   ToolCatalogEntry,
+  WorkerSpec,
   Workflow,
   WorkflowCreateSpec,
   WorkflowListPage,
@@ -331,6 +337,36 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   // §4e.5 api.connections.types — read-only catalog
   const connectionTypes: string[] = await api.connections.types();
   void connectionTypes;
+
+  // Phase 4f batch 1 — api.runTask + WorkerSpec + named errors
+  const workerSpec: WorkerSpec = {
+    id: "parse-html",
+    entry: "workers/parse-html.mjs",
+    memLimitMb: 128,
+    timeoutMs: 10_000,
+  };
+  void workerSpec;
+  // Zero-opts form (no memLimitMb / timeoutMs).
+  const minimalWorker: WorkerSpec = {
+    id: "noop",
+    entry: "workers/noop.mjs",
+  };
+  void minimalWorker;
+  const taskResult: unknown = await api.runTask("parse-html", { html: "" });
+  void taskResult;
+  const taskResultWithOpts: unknown = await api.runTask(
+    "parse-html",
+    { html: "" },
+    { timeoutMs: 5_000 },
+  );
+  void taskResultWithOpts;
+  // Each named error is constructible and structurally an Error.
+  const notFound: Error = new WorkerNotFoundError("parse-html");
+  const timedOut: Error = new WorkerTimeoutError("parse-html", 10_000);
+  const denied: Error = new WorkerCapabilityDeniedError();
+  void notFound;
+  void timedOut;
+  void denied;
 }
 
 export const __fixtureMarker = true;

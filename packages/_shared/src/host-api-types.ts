@@ -457,6 +457,70 @@ export type ExecutionLogEntry = {
 };
 
 // ---------------------------------------------------------------------------
+// Phase 4f batch 1 — plugin-defined workers + `api.runTask`
+// ---------------------------------------------------------------------------
+
+/**
+ * §4f batch 1 — Manifest-declared worker entry. Each declared worker becomes a
+ * separate ESM bundle under `workers/<id>.mjs` (built by `buildPlugin`) and is
+ * spawned by the host's worker pool via `api.runTask(id, input)`. Workers run
+ * in `worker_threads` isolation — they have NO `PluginHostAPI` access (no db,
+ * no fetch, no llm) and receive structured-clone input + return structured-
+ * clone output. Pure compute.
+ *
+ * Field semantics:
+ * - `id`: matches `/^[a-z0-9][a-z0-9-]*$/` (registry schema regex).
+ * - `entry`: source path relative to plugin root; MUST match
+ *   `^workers/[a-zA-Z0-9_-]+\.mjs$` after build.
+ * - `memLimitMb`: enforced via `Worker({ resourceLimits:
+ *   { maxOldGenerationSizeMb } })`. Range 32–1024 (registry schema).
+ * - `timeoutMs`: enforced via `Promise.race` against `min(opts.timeoutMs,
+ *   manifest.timeoutMs, hostMaxTimeoutMs)`. Range 100–300000.
+ */
+export interface WorkerSpec {
+  id: string;
+  entry: string;
+  memLimitMb?: number;
+  timeoutMs?: number;
+}
+
+/**
+ * §4f batch 1 — Thrown when `api.runTask(workerId, ...)` is called with a
+ * workerId that does not match any entry in the plugin's manifest
+ * `workers[]`. The host throws this BEFORE attempting to spawn a worker.
+ */
+export class WorkerNotFoundError extends Error {
+  constructor(workerId: string) {
+    super(`Worker not found: ${workerId}`);
+    this.name = "WorkerNotFoundError";
+  }
+}
+
+/**
+ * §4f batch 1 — Thrown when a worker exceeds its resolved timeout
+ * (`min(opts.timeoutMs, manifest.workers[].timeoutMs, hostMaxTimeoutMs)`).
+ * The host calls `worker.terminate()` before throwing.
+ */
+export class WorkerTimeoutError extends Error {
+  constructor(workerId: string, timeoutMs: number) {
+    super(`Worker ${workerId} exceeded ${timeoutMs}ms`);
+    this.name = "WorkerTimeoutError";
+  }
+}
+
+/**
+ * §4f batch 1 — Thrown when `api.runTask(...)` is invoked without the
+ * `worker.run` capability declared in the plugin's manifest. Capability gate
+ * runs before workerId lookup.
+ */
+export class WorkerCapabilityDeniedError extends Error {
+  constructor() {
+    super("worker.run capability not granted");
+    this.name = "WorkerCapabilityDeniedError";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Phase 4e.5 batch 1 — agents.* / integrations.list / connections.types /
 //                       workflow.create
 // ---------------------------------------------------------------------------
@@ -800,4 +864,25 @@ export type PluginHostAPI = {
     createExecution(spec: CreateExecutionSpec): Promise<CreateExecutionResult>;
     getExecutionLogs(executionId: string): Promise<ExecutionLogEntry[]>;
   };
+  /**
+   * §4f batch 1 — Dispatch a unit of work to a plugin-defined worker bundle.
+   * The host looks up `workerId` in the plugin's manifest `workers[]`, spawns
+   * (or reuses a pooled) `Worker` with `workers/<id>.mjs`, posts `input`, and
+   * resolves with the worker's serializable result. The resolved timeout is
+   * `min(opts.timeoutMs, manifest.workers[].timeoutMs, hostMaxTimeoutMs)`;
+   * on timeout the host terminates the worker and throws
+   * `WorkerTimeoutError`. Workers receive structured-clone input + return
+   * structured-clone output; they have NO `PluginHostAPI` access (no db, no
+   * fetch, no llm — pure compute).
+   *
+   * Capability: `worker.run`. Manifest `workers[]` MUST list the worker.
+   * - Missing capability → `WorkerCapabilityDeniedError`.
+   * - Unknown `workerId` → `WorkerNotFoundError`.
+   * - Timeout exceeded → `WorkerTimeoutError`.
+   */
+  runTask(
+    workerId: string,
+    input: unknown,
+    opts?: { timeoutMs?: number }
+  ): Promise<unknown>;
 };

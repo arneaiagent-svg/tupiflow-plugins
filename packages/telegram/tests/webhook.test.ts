@@ -141,6 +141,8 @@ function makeApi(opts: {
     connections: {
       types: async () => [],
     },
+    // Phase 4f batch 1 stub — webhook test does not exercise runTask.
+    runTask: async () => null,
   };
   return { api, fetchCalls, dispatchCalls, fetchCredentialsCalls };
 }
