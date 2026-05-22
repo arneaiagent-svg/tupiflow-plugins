@@ -7,6 +7,7 @@ capabilities = [
   "llm.call",
   "secrets.read",
   "net.fetch",
+  "worker.run",
 ]
 
 toolCatalogContributor = false
@@ -14,7 +15,7 @@ toolCatalogContributor = false
 [identity]
 name        = "workflow-builder"
 type        = "workflow-builder"
-version     = "1.1.0"
+version     = "1.2.0"
 publisher   = "tupiflow"
 description = "Internal tools that let an AI agent introspect this app: agents, actions, workflows, executions, connections, tools, plus core meta-actions like human-takeover."
 
@@ -24,6 +25,16 @@ min_tupiflow_version = "0.0.0"
 [icon]
 kind = "svg"
 path = "icon.svg"
+
+# Phase 4f batch 1 — plugin-defined workers (registry schema §workers[]).
+# entry must match the output path built by buildPlugin (workers/<id>.mjs).
+# id + entry here are documentation; the authoritative values come from
+# opts.workers in build.mjs (which generates manifest.workers[]).
+[[workers]]
+id          = "compute-hash"
+entry       = "workers/compute-hash.mjs"
+memLimitMb  = 64
+timeoutMs   = 5000
 
 [[takeoverTargets]]
 actionId    = "request-human-takeover"

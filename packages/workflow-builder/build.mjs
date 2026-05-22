@@ -640,6 +640,46 @@ const actions = [
       }),
     },
   },
+  // Phase 4f batch 1 — compute-hash: worker contract proof.
+  {
+    slug: "compute-hash",
+    label: "Compute Hash (SHA-256)",
+    description:
+      "Compute the SHA-256 hex digest of a string in an isolated worker thread. Demonstrates the api.runTask worker contract (pure compute, no network).",
+    category: "Workflow Builder",
+    stepFunction: "wfComputeHashStep",
+    configFields: [
+      {
+        key: "input",
+        label: "Input string",
+        type: "template-input",
+        required: true,
+      },
+    ],
+    outputFields: [
+      { field: "hash", description: "SHA-256 hex digest of the input string" },
+      { field: "algorithm", description: "Always 'sha256'" },
+      { field: "inputLength", description: "Byte length of the input string" },
+    ],
+    tool: {
+      name: "compute_hash",
+      description:
+        "Compute the SHA-256 hex digest of a string using an isolated worker thread. Use for deduplication keys, content fingerprinting, or deterministic identifiers. Returns hex string (64 chars).",
+      inputSchemaJson: JSON.stringify({
+        type: "object",
+        properties: {
+          input: {
+            type: "string",
+            minLength: 0,
+            description: "String to hash. Empty string is valid; returns the sha256 of empty.",
+          },
+        },
+        required: ["input"],
+        additionalProperties: false,
+      }),
+    },
+  },
+
   // fetch-article disabled v1: depends on jsdom + @mozilla/readability + turndown.
   // Registry has no requiredNpmDeps manifest field; bundling them blows past
   // the 10 MB bundle cap. Re-enable once either the registry adds dep declaration
@@ -804,4 +844,15 @@ await buildPlugin({
   srcEntry: "src/index.ts",
   distDir: resolve(root, "dist"),
   actions,
+  // Phase 4f batch 1 — compute-hash worker: sha256 of a string.
+  // Contract proof: pure compute, no blessed-module imports, no requiredNpmDeps.
+  // memLimitMb + timeoutMs are intentionally minimal for a hash-only worker.
+  workers: [
+    {
+      id: "compute-hash",
+      entry: "src/workers/compute-hash.mjs",
+      memLimitMb: 64,
+      timeoutMs: 5000,
+    },
+  ],
 });

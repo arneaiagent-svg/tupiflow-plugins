@@ -7,6 +7,7 @@
 
 import type { PluginHostAPI } from "@tupiflow-plugins/shared/host-api-types";
 
+import { wfComputeHashStep } from "./steps/compute-hash.ts";
 import { wfCreateAgentStep } from "./steps/create-agent.ts";
 import { wfCreateWorkflowStep } from "./steps/create-workflow.ts";
 import { wfDeleteAgentStep } from "./steps/delete-agent.ts";
@@ -184,6 +185,16 @@ const actions = [
     stepFunction: "wfSendErrorNotificationStep",
   },
 
+  // workers (4f batch 1 contract proof)
+  {
+    slug: "compute-hash",
+    label: "Compute Hash (SHA-256)",
+    description:
+      "Compute the SHA-256 hex digest of a string in an isolated worker thread. Demonstrates the api.runTask worker contract (pure compute, no network).",
+    category: "Workflow Builder",
+    stepFunction: "wfComputeHashStep",
+  },
+
   // takeover
   {
     slug: "request-human-takeover",
@@ -232,4 +243,7 @@ export function registerPlugin(api: PluginHostAPI): void {
   api.registerRegistryStep("wfSendErrorNotificationStep", wfSendErrorNotificationStep);
 
   api.registerRegistryStep("requestHumanTakeoverStep", requestHumanTakeoverStep);
+
+  // 4f batch 1 — compute-hash worker contract proof
+  api.registerRegistryStep("wfComputeHashStep", wfComputeHashStep);
 }
