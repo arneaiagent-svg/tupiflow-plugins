@@ -67,16 +67,19 @@ test("wfLaunchAgentStep - backward compatibility with userPrompt", async () => {
   }
 });
 
-test("wfLaunchAgentStep - validation fails if agentSlug is missing", async () => {
+test("wfLaunchAgentStep - defaults agentSlug to default if missing", async () => {
   const input = makeMockCtx({
     prompt: "Hello",
   });
 
   const result = await wfLaunchAgentStep(input);
 
-  assert.equal(result.success, false);
-  if (!result.success) {
-    assert.match(result.error.message, /agentSlug is required/);
+  assert.equal(result.success, true);
+  if (result.success) {
+    assert.deepEqual(result.data, {
+      text: 'Launched agent default with prompt: Hello. opts: {}',
+      toolStepsUsed: 42,
+    });
   }
 });
 

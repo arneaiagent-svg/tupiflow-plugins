@@ -40,15 +40,8 @@ export async function wfLaunchAgentStep({
 }: RegistryStepInput): Promise<StepResult> {
   const input = ctx.input as WfLaunchAgentInput;
   try {
-    const agentSlug = input.agentSlug?.trim();
+    const agentSlug = input.agentSlug?.trim() || "default";
     const prompt = (input.prompt || input.userPrompt)?.trim();
-
-    if (!agentSlug) {
-      return {
-        success: false,
-        error: { message: "agentSlug is required and cannot be empty" },
-      };
-    }
 
     if (!prompt) {
       return {
