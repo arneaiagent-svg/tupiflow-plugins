@@ -792,12 +792,83 @@ export type RegistryStepHandler = (
   input: RegistryStepInput
 ) => Promise<StepResult>;
 
+// ---------------------------------------------------------------------------
+// Phase 4e.5 batch 3 — notifications.send
+// ---------------------------------------------------------------------------
+
+/**
+ * §4e.5 batch 3 — manual error-notification dispatch from a plugin step
+ * (e.g. workflow-builder's `send-error-notification` action). The host
+ * routes the spec into its configured channels (webhook / ntfy / connection
+ * via site settings); rate-limit + cooldown that apply to automatic
+ * error notifications are intentionally BYPASSED here because the call is
+ * user-triggered. Capability: `notifications.send`.
+ *
+ * `at` is filled in by the host (always wall-clock now). Plugin should not
+ * pass it.
+ */
+export interface ErrorNotificationFailedNode {
+  nodeId: string;
+  nodeType?: string;
+  error: string;
+  logs?: string[];
+}
+
+export interface ErrorNotificationSpec {
+  /** Human-readable error summary. Required, non-empty after trim. */
+  message: string;
+  workflowId?: string;
+  workflowName?: string;
+  executionId?: string;
+  failedNodes?: ErrorNotificationFailedNode[];
+}
+
+export interface ErrorNotificationResult {
+  /** True when at least one channel accepted the dispatch. */
+  dispatched: boolean;
+  /** Populated when `dispatched === false` (no channels configured / dispatch failure). */
+  reason?: string;
+}
+
 export type PluginHostAPI = {
   db: PluginDb;
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  /**
+   * Fetch the credential bag for an integration row. The shape is
+   * `Record<string, string | undefined>` — populated keys vary per
+   * integration type:
+   * - `agents_*` providers (built-in AI provider integrations) return
+   *   `apiKey` (when the provider requires one) plus any non-secret
+   *   `extraFormFields` declared by the provider spec — notably
+   *   `baseURL` for self-hosted runtimes like `agents_ollama` (where
+   *   `noApiKey: true` and the bag contains ONLY `baseURL`). Callers
+   *   targeting Ollama-style integrations MUST read `creds.baseURL`
+   *   alongside (or instead of) `creds.apiKey`.
+   * - Runtime-registry plugin integrations return the configKey set
+   *   declared in the plugin manifest's `formFields[]`.
+   *
+   * Ownership-scoped: the call rejects (`CapabilityDeniedError` →
+   * surfaced as a thrown error to the plugin) when the row's
+   * `integration.type` does not match the calling plugin's owned
+   * `integrationType` (manifest `identity.type`). Built-in `agents_*` rows
+   * pass the same gate when the calling plugin's manifest owns the
+   * corresponding `agents_*` type (e.g. an AI-provider plugin) OR when
+   * the plugin's manifest declares it consumes `agents_*` types (workflow
+   * builder pattern). Confirm exact ownership rule with the host
+   * implementation — the shim documents intent; the host enforces.
+   * Capability: `secrets.read`.
+   */
   fetchCredentials(
     integrationId: string
   ): Promise<Record<string, string | undefined>>;
+  /**
+   * §4e.5 batch 3 — dispatch an error notification through the host's
+   * configured channels (webhook / ntfy / connection). User-triggered:
+   * the host does NOT apply the cooldown / global rate limit it applies to
+   * automatic error notifications. Returns `{ dispatched: false, reason }` if
+   * no channel is configured. Capability: `notifications.send`.
+   */
+  sendErrorNotification(spec: ErrorNotificationSpec): Promise<ErrorNotificationResult>;
   llm: {
     call(args: LlmCallArgs): Promise<LlmCallResult>;
     /**

@@ -124,6 +124,11 @@ function makeApi(args: {
     },
     // Phase 4f batch 1 stub — connection test does not exercise runTask.
     runTask: async () => null,
+    // Phase 4e.5 batch 3 stub — connection test does not exercise sendErrorNotification.
+    sendErrorNotification: async () => ({
+      dispatched: false,
+      reason: "stub",
+    }),
   };
   return { api, fetchCredentialsCalls, fetchCalls };
 }

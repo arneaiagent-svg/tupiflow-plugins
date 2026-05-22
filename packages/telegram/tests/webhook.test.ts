@@ -151,6 +151,11 @@ function makeApi(opts: {
     },
     // Phase 4f batch 1 stub — webhook test does not exercise runTask.
     runTask: async () => null,
+    // Phase 4e.5 batch 3 stub — webhook test does not exercise sendErrorNotification.
+    sendErrorNotification: async () => ({
+      dispatched: false,
+      reason: "stub",
+    }),
   };
   return { api, fetchCalls, dispatchCalls, fetchCredentialsCalls };
 }
