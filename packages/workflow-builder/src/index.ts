@@ -11,7 +11,7 @@ import { wfCreateAgentStep } from "./steps/create-agent.ts";
 import { wfCreateWorkflowStep } from "./steps/create-workflow.ts";
 import { wfDeleteAgentStep } from "./steps/delete-agent.ts";
 import { wfExecuteWorkflowStep } from "./steps/execute-workflow.ts";
-import { wfFetchArticleStep } from "./steps/fetch-article.ts";
+// import { wfFetchArticleStep } from "./steps/fetch-article.ts"; // Disabled v1: depends on jsdom + @mozilla/readability + turndown; registry has no requiredNpmDeps surface yet.
 import { wfFetchModelsStep } from "./steps/fetch-models.ts";
 import { wfFetchStep } from "./steps/fetch.ts";
 import { wfGetWorkflowExecutionsStep } from "./steps/get-workflow-executions.ts";
@@ -150,14 +150,15 @@ const actions = [
     category: "Workflow Builder",
     stepFunction: "wfFetchStep",
   },
-  {
-    slug: "fetch-article",
-    label: "Fetch Article (Readable)",
-    description:
-      "Fetch ONE URL and return the readable article body as markdown. Single-page extraction only — does not crawl, does not follow links, does not dump site structure.",
-    category: "Workflow Builder",
-    stepFunction: "wfFetchArticleStep",
-  },
+  // Disabled v1: see fetch-article.ts import comment above.
+  // {
+  //   slug: "fetch-article",
+  //   label: "Fetch Article (Readable)",
+  //   description:
+  //     "Fetch ONE URL and return the readable article body as markdown. Single-page extraction only — does not crawl, does not follow links, does not dump site structure.",
+  //   category: "Workflow Builder",
+  //   stepFunction: "wfFetchArticleStep",
+  // },
   {
     slug: "fetch-models",
     label: "Fetch Models (AI Provider)",
@@ -225,7 +226,7 @@ export function registerPlugin(api: PluginHostAPI): void {
   api.registerRegistryStep("wfListConnectionsStep", wfListConnectionsStep);
   api.registerRegistryStep("wfListToolsStep", wfListToolsStep);
   api.registerRegistryStep("wfFetchStep", wfFetchStep);
-  api.registerRegistryStep("wfFetchArticleStep", wfFetchArticleStep);
+  // api.registerRegistryStep("wfFetchArticleStep", wfFetchArticleStep); // Disabled v1.
   api.registerRegistryStep("wfFetchModelsStep", wfFetchModelsStep);
   api.registerRegistryStep("wfRunJsStep", wfRunJsStep);
   api.registerRegistryStep("wfSendErrorNotificationStep", wfSendErrorNotificationStep);

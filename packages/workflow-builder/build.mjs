@@ -640,44 +640,11 @@ const actions = [
       }),
     },
   },
-  {
-    slug: "fetch-article",
-    label: "Fetch Article (Readable)",
-    description:
-      "Fetch ONE URL and return the readable article body as markdown. Single-page extraction only — does not crawl, does not follow links, does not dump site structure.",
-    category: "Workflow Builder",
-    stepFunction: "wfFetchArticleStep",
-    configFields: [
-      { key: "url", label: "URL", type: "template-input", required: true },
-      { key: "timeoutMs", label: "Timeout (ms)", type: "number" },
-      { key: "disableBrowserHeaders", label: "Disable browser headers", type: "select" },
-    ],
-    outputFields: [
-      { field: "markdown", description: "Article body converted to markdown" },
-      { field: "title", description: "Extracted article title (may be null)" },
-      { field: "byline", description: "Extracted byline/author (may be null)" },
-      { field: "excerpt", description: "Short summary from Readability (may be null)" },
-      { field: "length", description: "Length of markdown in characters" },
-      { field: "contentType", description: "Response content-type header" },
-      { field: "url", description: "URL that was requested" },
-      { field: "finalUrl", description: "URL after redirects" },
-    ],
-    tool: {
-      name: "fetch_article",
-      description:
-        "Fetch ONE page's readable article body as markdown (Readability + Turndown). Single page only — no crawl, no link-follow. Use for blog posts, news, docs, wiki, READMEs. NOT for homepages, sitemaps, dashboards, or site structure (returns `not_article` — use `fetch` for raw HTML). Returns markdown + title/byline/excerpt/length, or reason: `not_article`|`http_error`|`timeout`|`unsupported_content_type`|`response_too_large`|`fetch_failed`.",
-      inputSchemaJson: JSON.stringify({
-        type: "object",
-        properties: {
-          url: { type: "string", format: "uri" },
-          timeoutMs: { type: "integer", minimum: 1, maximum: 60000 },
-          disableBrowserHeaders: { type: "boolean" },
-        },
-        required: ["url"],
-        additionalProperties: false,
-      }),
-    },
-  },
+  // fetch-article disabled v1: depends on jsdom + @mozilla/readability + turndown.
+  // Registry has no requiredNpmDeps manifest field; bundling them blows past
+  // the 10 MB bundle cap. Re-enable once either the registry adds dep declaration
+  // OR a small jsdom-free implementation lands. Step impl stays in
+  // src/steps/fetch-article.ts for now (not imported by src/index.ts).
   {
     slug: "fetch-models",
     label: "Fetch Models (AI Provider)",
@@ -837,5 +804,4 @@ await buildPlugin({
   srcEntry: "src/index.ts",
   distDir: resolve(root, "dist"),
   actions,
-  external: ["jsdom", "@mozilla/readability", "turndown"],
 });
