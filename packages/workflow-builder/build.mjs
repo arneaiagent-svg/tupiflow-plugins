@@ -830,68 +830,6 @@ const actions = [
     },
   },
 
-  // note-actions.ts
-  {
-    slug: "generate-test-payload",
-    label: "Generate Test Payload",
-    description:
-      "Produce a synthetic payload of a target size. Used to exercise agent-handle tier boundaries (inline, JSONB, S3, 50 MB cap).",
-    category: "Workflow Builder",
-    stepFunction: "generateTestPayloadStep",
-    configFields: [
-      { key: "sizeBytes", label: "Target size (bytes)", type: "number", required: true },
-      { key: "shape", label: "Shape", type: "select" },
-    ],
-    outputFields: [
-      { field: "items", description: "Synthetic array (when shape=array)" },
-      { field: "filler", description: "Synthetic string (when shape=object)" },
-      { field: "approxBytes", description: "Approximate serialized size" },
-    ],
-    tool: {
-      name: "generate_test_payload",
-      description:
-        "Generate a synthetic payload of an approximate target size, for testing handle tier boundaries. Use shape=array for { items: [...] } or shape=object for { filler: '...' }. Sizes above 50 MB trigger the handle store's hard cap.",
-      inputSchemaJson: JSON.stringify({
-        type: "object",
-        properties: {
-          sizeBytes: { type: "integer", minimum: 0, maximum: 100000000 },
-          shape: { type: "string", enum: ["array", "object"] },
-        },
-        required: ["sizeBytes"],
-        additionalProperties: false,
-      }),
-    },
-  },
-  {
-    slug: "write-note",
-    label: "Write Note",
-    description:
-      "Write a note string to the local filesystem. Used as a test sink for agent-handle copy-paste detection.",
-    category: "Workflow Builder",
-    stepFunction: "writeNoteStep",
-    configFields: [
-      { key: "filename", label: "Filename", type: "template-input", required: true },
-      { key: "content", label: "Content", type: "template-textarea", required: true },
-    ],
-    outputFields: [
-      { field: "path", description: "Absolute path of the written file" },
-      { field: "bytesWritten", description: "Number of bytes written" },
-    ],
-    tool: {
-      name: "write_note",
-      description:
-        "Write a note to the filesystem. Pass the note text in `content`. Use this to persist short reminders or test outputs.",
-      inputSchemaJson: JSON.stringify({
-        type: "object",
-        properties: {
-          filename: { type: "string", description: "Filename for the note (basename only)." },
-          content: { type: "string", description: "Text content to write." },
-        },
-        required: ["filename", "content"],
-        additionalProperties: false,
-      }),
-    },
-  },
 ];
 
 await buildPlugin({
@@ -899,4 +837,5 @@ await buildPlugin({
   srcEntry: "src/index.ts",
   distDir: resolve(root, "dist"),
   actions,
+  external: ["jsdom", "@mozilla/readability", "turndown"],
 });

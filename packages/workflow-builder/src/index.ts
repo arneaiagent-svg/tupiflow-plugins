@@ -1,12 +1,32 @@
 // workflow-builder — registry-installable port of plugins/workflow-builder
-// from the tupiflow first-party tree. Phase A: scaffold + integration spec +
-// takeover target registration. Step registration lands in Phase B.
+// from the tupiflow first-party tree.
 //
 // Publisher: `tupiflow` (publisher-gated workflow.read methods rely on this).
 // Capabilities exposed: takeover.register, workflow.read, workflow.write,
 // db.read, db.write, llm.call, secrets.read, net.fetch.
 
 import type { PluginHostAPI } from "@tupiflow-plugins/shared/host-api-types";
+
+import { wfCreateAgentStep } from "./steps/create-agent.ts";
+import { wfCreateWorkflowStep } from "./steps/create-workflow.ts";
+import { wfDeleteAgentStep } from "./steps/delete-agent.ts";
+import { wfExecuteWorkflowStep } from "./steps/execute-workflow.ts";
+import { wfFetchArticleStep } from "./steps/fetch-article.ts";
+import { wfFetchModelsStep } from "./steps/fetch-models.ts";
+import { wfFetchStep } from "./steps/fetch.ts";
+import { wfGetWorkflowExecutionsStep } from "./steps/get-workflow-executions.ts";
+import { wfGetWorkflowStep } from "./steps/get-workflow.ts";
+import { wfLaunchAgentStep } from "./steps/launch-agent.ts";
+import { wfListActionsStep } from "./steps/list-actions.ts";
+import { wfListAgentsStep } from "./steps/list-agents.ts";
+import { wfListConnectionsStep } from "./steps/list-connections.ts";
+import { wfListIntegrationsStep } from "./steps/list-integrations.ts";
+import { wfListToolsStep } from "./steps/list-tools.ts";
+import { wfListWorkflowsStep } from "./steps/list-workflows.ts";
+import { requestHumanTakeoverStep } from "./steps/request-human-takeover.ts";
+import { wfRunJsStep } from "./steps/run-js.ts";
+import { wfSendErrorNotificationStep } from "./steps/send-error-notification.ts";
+import { wfUpdateAgentStep } from "./steps/update-agent.ts";
 
 const actions = [
   // workflow CRUD
@@ -172,24 +192,6 @@ const actions = [
     category: "Workflow Builder",
     stepFunction: "requestHumanTakeoverStep",
   },
-
-  // notes / test
-  {
-    slug: "generate-test-payload",
-    label: "Generate Test Payload",
-    description:
-      "Produce a synthetic payload of a target size. Used to exercise agent-handle tier boundaries (inline, JSONB, S3, 50 MB cap).",
-    category: "Workflow Builder",
-    stepFunction: "generateTestPayloadStep",
-  },
-  {
-    slug: "write-note",
-    label: "Write Note",
-    description:
-      "Write a note string to the local filesystem. Used as a test sink for agent-handle copy-paste detection.",
-    category: "Workflow Builder",
-    stepFunction: "writeNoteStep",
-  },
 ];
 
 export function registerPlugin(api: PluginHostAPI): void {
@@ -200,24 +202,33 @@ export function registerPlugin(api: PluginHostAPI): void {
     formFields: [],
   });
 
-  // Replaces the first-party
-  // `registerTakeoverAction("workflow-builder/request-human-takeover")` call.
-  // Manifest `takeoverTargets[]` lists the matching `actionId` so the
-  // registry allOf clause is satisfied (capability `takeover.register`).
   api.registerTakeoverTarget("request-human-takeover", {
     label: "Request human takeover",
     description:
       "Hand the conversation over to a human operator from a chat connection workflow.",
   });
 
-  // TODO Phase B: api.registerRegistryStep(...) calls for each of the 22 steps
-  // (wfCreateWorkflowStep, wfListWorkflowsStep, wfGetWorkflowStep,
-  //  wfExecuteWorkflowStep, wfGetWorkflowExecutionsStep, wfListAgentsStep,
-  //  wfCreateAgentStep, wfUpdateAgentStep, wfDeleteAgentStep, wfLaunchAgentStep,
-  //  wfListActionsStep, wfListIntegrationsStep, wfListConnectionsStep,
-  //  wfListToolsStep, wfFetchStep, wfFetchArticleStep, wfFetchModelsStep,
-  //  wfRunJsStep, wfSendErrorNotificationStep, requestHumanTakeoverStep,
-  //  generateTestPayloadStep, writeNoteStep). Implementations rewired to use
-  //  api.workflow.*, api.fetchCredentials, api.llm.call, api.db.{read,write}.
-  // TODO Phase B: api.registerTool(...) calls for the tool-eligible actions.
+  api.registerRegistryStep("wfCreateWorkflowStep", wfCreateWorkflowStep);
+  api.registerRegistryStep("wfListWorkflowsStep", wfListWorkflowsStep);
+  api.registerRegistryStep("wfGetWorkflowStep", wfGetWorkflowStep);
+  api.registerRegistryStep("wfExecuteWorkflowStep", wfExecuteWorkflowStep);
+  api.registerRegistryStep("wfGetWorkflowExecutionsStep", wfGetWorkflowExecutionsStep);
+
+  api.registerRegistryStep("wfListAgentsStep", wfListAgentsStep);
+  api.registerRegistryStep("wfCreateAgentStep", wfCreateAgentStep);
+  api.registerRegistryStep("wfUpdateAgentStep", wfUpdateAgentStep);
+  api.registerRegistryStep("wfDeleteAgentStep", wfDeleteAgentStep);
+  api.registerRegistryStep("wfLaunchAgentStep", wfLaunchAgentStep);
+
+  api.registerRegistryStep("wfListActionsStep", wfListActionsStep);
+  api.registerRegistryStep("wfListIntegrationsStep", wfListIntegrationsStep);
+  api.registerRegistryStep("wfListConnectionsStep", wfListConnectionsStep);
+  api.registerRegistryStep("wfListToolsStep", wfListToolsStep);
+  api.registerRegistryStep("wfFetchStep", wfFetchStep);
+  api.registerRegistryStep("wfFetchArticleStep", wfFetchArticleStep);
+  api.registerRegistryStep("wfFetchModelsStep", wfFetchModelsStep);
+  api.registerRegistryStep("wfRunJsStep", wfRunJsStep);
+  api.registerRegistryStep("wfSendErrorNotificationStep", wfSendErrorNotificationStep);
+
+  api.registerRegistryStep("requestHumanTakeoverStep", requestHumanTakeoverStep);
 }
