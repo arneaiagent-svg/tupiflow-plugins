@@ -28,6 +28,8 @@ import type {
   AgentUpdatePatch,
   ChatMessageEvent,
   ConnectionInstance,
+  ConnectionSendReplyResult,
+  ConnectionSendReplySpec,
   CreateExecutionResult,
   DbCallOpts,
   EmbedArgs,
@@ -36,9 +38,13 @@ import type {
   IntegrationConfigPatch,
   IntegrationListItem,
   IntegrationSpec,
+  LaunchAgentOpts,
+  LaunchAgentResult,
   PluginHostAPI,
   RegistryStepInput,
   RouteContext,
+  SandboxOpts,
+  SandboxResult,
   StepResult,
   TakeoverTargetSpec,
   TestIntegrationResult,
@@ -433,6 +439,51 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
     void iType;
     void iLabel;
   }
+
+  // Phase 4e.5 batch 5 — api.runSandbox type verification
+  const sandboxOpts: SandboxOpts = { timeoutMs: 2000, memoryLimitMb: 64 };
+  const sandResult: SandboxResult = await api.runSandbox("return 42;", { data: {} }, sandboxOpts);
+  if (sandResult.success) {
+    const val: unknown = sandResult.value;
+    const logs: string[] = sandResult.logs;
+    void val;
+    void logs;
+  } else {
+    const errKind: string = sandResult.error.kind;
+    const errMsg: string = sandResult.error.message;
+    const logs: string[] = sandResult.logs;
+    void errKind;
+    void errMsg;
+    void logs;
+  }
+
+  // Phase 4e.5 batch 4b — api.connections.sendReply type verification
+  const sendReplySpec: ConnectionSendReplySpec = {
+    integrationId: "connection-1",
+    threadJson: "{}",
+    text: "Hello, reply!",
+  };
+  const sendReplyResult: ConnectionSendReplyResult = await api.connections.sendReply(sendReplySpec);
+  const delivered: boolean = sendReplyResult.delivered;
+  const msgId: string | undefined = sendReplyResult.messageId;
+  const threadId: string = sendReplyResult.threadId;
+  void delivered;
+  void msgId;
+  void threadId;
+
+  // Phase 4e.5 batch 4a — api.launchAgent type verification
+  const launchOpts: LaunchAgentOpts = {
+    providerOverride: "openai",
+    modelOverride: "gpt-5-mini",
+    connectionIntegrationId: "connection-1",
+    connectionThreadJson: "{}",
+    maxToolSteps: 5,
+  };
+  const launchResult: LaunchAgentResult = await api.launchAgent("my-agent", "Hello agent!", launchOpts);
+  const responseText: string = launchResult.text;
+  const toolSteps: number = launchResult.toolStepsUsed;
+  void responseText;
+  void toolSteps;
 }
 
 export const __fixtureMarker = true;

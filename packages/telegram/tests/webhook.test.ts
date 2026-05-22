@@ -148,6 +148,7 @@ function makeApi(opts: {
     },
     connections: {
       types: async () => [],
+      sendReply: async () => ({ delivered: false, threadId: "stub" }),
     },
     // Phase 4f batch 1 stub — webhook test does not exercise runTask.
     runTask: async () => null,
@@ -156,6 +157,8 @@ function makeApi(opts: {
       dispatched: false,
       reason: "stub",
     }),
+    runSandbox: async () => ({ success: true, value: null, logs: [] }),
+    launchAgent: async () => ({ text: "", toolStepsUsed: 0 }),
   };
   return { api, fetchCalls, dispatchCalls, fetchCredentialsCalls };
 }

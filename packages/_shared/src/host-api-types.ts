@@ -830,6 +830,76 @@ export interface ErrorNotificationResult {
   reason?: string;
 }
 
+export type SandboxErrorKind =
+  | 'timeout'
+  | 'oom'
+  | 'syntax'
+  | 'runtime'
+  | 'non_serializable';
+
+export interface SandboxOpts {
+  /** Hard cap in ms. Default 1000; max 10000. Lower clamp 1ms. */
+  timeoutMs?: number;
+  /** Hard cap in MiB. Default 64; max 128. */
+  memoryLimitMb?: number;
+}
+
+export type SandboxSuccess = {
+  success: true;
+  value: unknown;
+  logs: string[];
+};
+
+export type SandboxFailure = {
+  success: false;
+  error: { kind: SandboxErrorKind; message: string };
+  logs: string[];
+};
+
+export type SandboxResult = SandboxSuccess | SandboxFailure;
+
+export interface ConnectionSendReplySpec {
+  /** Target integration row id (must be a connection-type integration). */
+  integrationId: string;
+  /**
+   * Thread context. If omitted, the host resolves the row default
+   * threadJson from connection_thread_history (latest by updatedAt).
+   * Plugins that already loaded a row should pass it through to avoid
+   * the extra DB read.
+   */
+  threadJson?: string;
+  /** Message text. Required, non-empty after trim. */
+  text: string;
+}
+
+export interface ConnectionSendReplyResult {
+  /** True when the adapter returned a successful upstream response. */
+  delivered: boolean;
+  /** Adapter-assigned message id (e.g. Telegram message_id). */
+  messageId?: string;
+  /** Always returned; matches the resolved thread the post landed in. */
+  threadId: string;
+}
+
+export interface LaunchAgentOpts {
+  /** Optional per-call provider override (e.g. openai). */
+  providerOverride?: string;
+  /** Optional per-call model override (e.g. gpt-5-mini). */
+  modelOverride?: string;
+  /** If launching inside an active thread, pass through. */
+  connectionIntegrationId?: string;
+  connectionThreadJson?: string;
+  /** Hard cap on tool-call iterations. Default/max enforced by host. */
+  maxToolSteps?: number;
+}
+
+export interface LaunchAgentResult {
+  /** Final assistant text after the tool loop terminates. */
+  text: string;
+  /** Total tool-call iterations consumed. */
+  toolStepsUsed: number;
+}
+
 export type PluginHostAPI = {
   db: PluginDb;
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
@@ -869,6 +939,30 @@ export type PluginHostAPI = {
    * no channel is configured. Capability: `notifications.send`.
    */
   sendErrorNotification(spec: ErrorNotificationSpec): Promise<ErrorNotificationResult>;
+  /**
+   * Phase 4e.5 batch 5 — run user-supplied JavaScript code in a WASM
+   * QuickJS sandbox with isolated heap. Stripped globals: fetch,
+   * setTimeout, setInterval, clearTimeout, clearInterval, require,
+   * process, globalThis. Available: JSON, Math, Date, console.log.
+   * User code is wrapped as (function(data){ <code> })(globalThis.data);
+   * the return value must be JSON-serializable. Capability: code.sandbox.
+   */
+  runSandbox(
+    code: string,
+    ctx: { data: unknown },
+    opts?: SandboxOpts
+  ): Promise<SandboxResult>;
+  /**
+   * Phase 4e.5 batch 4a — launch a host-defined agent by slug with a
+   * single user prompt. Synchronous: resolves when the agent tool loop
+   * returns final text. No slug-prefix gate; capability is the consent
+   * boundary. Capability: agent.launch.
+   */
+  launchAgent(
+    slug: string,
+    prompt: string,
+    opts?: LaunchAgentOpts
+  ): Promise<LaunchAgentResult>;
   llm: {
     call(args: LlmCallArgs): Promise<LlmCallResult>;
     /**
@@ -1050,6 +1144,15 @@ export type PluginHostAPI = {
    */
   connections: {
     types(): Promise<string[]>;
+    /**
+     * Phase 4e.5 batch 4b — post a message into an existing connection
+     * thread (Telegram chat, WhatsApp conversation, etc). The host resolves
+     * the integration type, dispatches via the registered adapter ThreadImpl,
+     * and returns the delivery receipt. Capability: connection.send.
+     * Ownership: any plugin with the capability + threadJson may post;
+     * threadJson serves as proof of authorized context.
+     */
+    sendReply(spec: ConnectionSendReplySpec): Promise<ConnectionSendReplyResult>;
   };
   /**
    * §2.6 — Workflow CRUD namespace. `get`, `list`, and `getExecutionLogs`

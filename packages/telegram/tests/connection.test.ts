@@ -121,6 +121,7 @@ function makeApi(args: {
     },
     connections: {
       types: async () => [],
+      sendReply: async () => ({ delivered: false, threadId: "stub" }),
     },
     // Phase 4f batch 1 stub — connection test does not exercise runTask.
     runTask: async () => null,
@@ -129,6 +130,8 @@ function makeApi(args: {
       dispatched: false,
       reason: "stub",
     }),
+    runSandbox: async () => ({ success: true, value: null, logs: [] }),
+    launchAgent: async () => ({ text: "", toolStepsUsed: 0 }),
   };
   return { api, fetchCredentialsCalls, fetchCalls };
 }
