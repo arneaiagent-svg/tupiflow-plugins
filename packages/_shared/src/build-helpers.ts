@@ -64,6 +64,13 @@ export type BuildPluginOptions = {
    * include the `db.custom_sql` capability in `plugin.toml`.
    */
   customSql?: string[];
+  /**
+   * npm package names to mark as external in the esbuild bundle. The plugin
+   * relies on these being present in the customer host's node_modules at
+   * runtime. Use for heavyweight deps (e.g. `jsdom`, `@mozilla/readability`)
+   * that tupiflow already ships, so the plugin bundle stays small.
+   */
+  external?: string[];
 };
 
 const CUSTOM_SQL_PATH_RE = /^custom-sql\/[0-9]{4,}_[a-z0-9_]+\.sql$/;
@@ -108,6 +115,7 @@ export async function buildPlugin(
     outfile: bundlePath,
     legalComments: "none",
     logLevel: "info",
+    external: opts.external ?? [],
   });
 
   const tomlSrc = await readFile(resolve(root, "plugin.toml"), "utf8");
