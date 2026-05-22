@@ -15,6 +15,8 @@
 // import side-effects.
 
 import {
+  MissingNpmDepError,
+  NpmDepNotAllowedError,
   WorkerCapabilityDeniedError,
   WorkerNotFoundError,
   WorkerTimeoutError,
@@ -367,6 +369,40 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   void notFound;
   void timedOut;
   void denied;
+
+  // Phase 4f batch 2 — MissingNpmDepError + NpmDepNotAllowedError type-level
+  // construction + custom-field reads. Both forms of MissingNpmDepError
+  // (with and without installedVersion) must compile.
+  const missingNotInstalled: MissingNpmDepError = new MissingNpmDepError(
+    "jsdom",
+    "^22.0.0",
+  );
+  const missingName: string = missingNotInstalled.depName;
+  const missingRange: string = missingNotInstalled.declaredRange;
+  const missingInstalled: string | undefined = missingNotInstalled.installedVersion;
+  void missingName;
+  void missingRange;
+  void missingInstalled;
+
+  const missingOutOfRange: MissingNpmDepError = new MissingNpmDepError(
+    "@mozilla/readability",
+    "^0.5.0",
+    "0.4.4",
+  );
+  const installed: string | undefined = missingOutOfRange.installedVersion;
+  void installed;
+
+  const notAllowed: NpmDepNotAllowedError = new NpmDepNotAllowedError(
+    "left-pad",
+  );
+  const notAllowedName: string = notAllowed.depName;
+  void notAllowedName;
+
+  // Structural-Error compat (parallel to the worker errors above).
+  const missingAsError: Error = missingNotInstalled;
+  const notAllowedAsError: Error = notAllowed;
+  void missingAsError;
+  void notAllowedAsError;
 }
 
 export const __fixtureMarker = true;

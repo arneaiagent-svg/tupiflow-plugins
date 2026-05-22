@@ -4,7 +4,11 @@
 // the subpath exports (e.g. "@tupiflow-plugins/shared/build-helpers") and
 // only use this entrypoint when they really need a single import line.
 
-export { BLESSED_HOST_MODULES, buildPlugin } from "./build-helpers.ts";
+export {
+  ALLOWED_NPM_DEPS,
+  BLESSED_HOST_MODULES,
+  buildPlugin,
+} from "./build-helpers.ts";
 export type {
   BuildPluginOptions,
   BuildPluginResult,
@@ -12,6 +16,8 @@ export type {
 } from "./build-helpers.ts";
 
 export {
+  MissingNpmDepError,
+  NpmDepNotAllowedError,
   WorkerCapabilityDeniedError,
   WorkerNotFoundError,
   WorkerTimeoutError,

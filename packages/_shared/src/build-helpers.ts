@@ -65,6 +65,32 @@ export const BLESSED_HOST_MODULES = {
   canonicalize: "^3.0.0",
 } as const;
 
+/**
+ * §4f batch 2 — Closed allowlist of npm package names a plugin may declare in
+ * `manifest.requiredNpmDeps`. Mirrors the registry-side Go allowlist byte-for-
+ * byte; drift between the two is caught by
+ * `tupiflow-registry/scripts/check-npm-allowlist.sh`.
+ *
+ * Distinct from `BLESSED_HOST_MODULES`: blessed modules are always available
+ * to every plugin (no opt-in). `ALLOWED_NPM_DEPS` are opt-in heavy parsing
+ * libs the host commits to providing when a plugin explicitly declares them
+ * — the host installer verifies presence + semver range at install time, so
+ * unused entries impose zero install-time cost on hosts.
+ *
+ * Adding a new entry requires a PR to BOTH this constant AND the registry Go
+ * mirror, with a justification for why the dep can't be bundled. Native-
+ * binding-heavy libs (canvas, unpdf, …) stay OUT — those route through the
+ * sidecar mechanism (`PLUGIN_TIERS.md` §3 Amendment 2).
+ */
+export const ALLOWED_NPM_DEPS = [
+  "jsdom",
+  "@mozilla/readability",
+  "turndown",
+  "pdf-parse",
+  "sharp",
+  "mammoth",
+] as const;
+
 const WORKER_ENTRY_RE = /^workers\/[a-zA-Z0-9_-]+\.mjs$/;
 
 export type BuildPluginOptions = {
@@ -114,6 +140,18 @@ export type BuildPluginOptions = {
    * capability in `plugin.toml` (registry allOf clause).
    */
   workers?: WorkerSpec[];
+  /**
+   * §4f batch 2 — External npm deps the plugin imports but does NOT bundle.
+   * Each declared name is validated against `ALLOWED_NPM_DEPS` at build time
+   * (off-allowlist names throw before publish) and added to the esbuild
+   * `external` list for BOTH the main bundle and every worker bundle
+   * (alongside `BLESSED_HOST_MODULES`). Values are npm semver ranges
+   * (`^22.0.0`, `~0.5.0`, …); the registry Go validator re-parses them at
+   * publish. Recorded verbatim on `manifest.requiredNpmDeps`. The host
+   * installer enforces presence + range at install time
+   * (`MissingNpmDepError` on a mismatch).
+   */
+  requiredNpmDeps?: Record<string, string>;
 };
 
 const CUSTOM_SQL_PATH_RE = /^custom-sql\/[0-9]{4,}_[a-z0-9_]+\.sql$/;
@@ -162,6 +200,29 @@ export async function buildPlugin(
   // runtime from its own node_modules; plugins MUST NOT vendor them.
   const blessedExternals = Object.keys(BLESSED_HOST_MODULES);
 
+  // §4f batch 2 — validate + externalize plugin-declared npm deps. Validation
+  // runs BEFORE rm/mkdir so a bad name fails the build without touching
+  // distDir. Off-allowlist names fail loudly here so the publish-time
+  // registry rejection never fires in practice.
+  const npmDepExternals: string[] = [];
+  if (opts.requiredNpmDeps) {
+    const allowed = new Set<string>(ALLOWED_NPM_DEPS);
+    for (const [name, range] of Object.entries(opts.requiredNpmDeps)) {
+      if (!allowed.has(name)) {
+        throw new Error(
+          `buildPlugin: requiredNpmDeps entry "${name}" is not on the registry allowlist (ALLOWED_NPM_DEPS). Update both shim + registry Go allowlist to add it.`
+        );
+      }
+      if (typeof range !== "string" || range.length === 0) {
+        throw new Error(
+          `buildPlugin: requiredNpmDeps["${name}"] must be a non-empty semver range string (got ${typeof range}).`
+        );
+      }
+      npmDepExternals.push(name);
+    }
+  }
+  const allExternals = [...blessedExternals, ...npmDepExternals];
+
   await rm(distDir, { recursive: true, force: true });
   await mkdir(distDir, { recursive: true });
 
@@ -173,7 +234,7 @@ export async function buildPlugin(
     format: "esm",
     target: "node20",
     outfile: bundlePath,
-    external: blessedExternals,
+    external: allExternals,
     legalComments: "none",
     logLevel: "info",
   });
@@ -270,7 +331,7 @@ export async function buildPlugin(
         format: "esm",
         target: "node20",
         outfile: outPath,
-        external: blessedExternals,
+        external: allExternals,
         legalComments: "none",
         logLevel: "info",
       });
@@ -326,6 +387,9 @@ export async function buildPlugin(
       ? { customSql: opts.customSql }
       : {}),
     ...(manifestWorkers.length > 0 ? { workers: manifestWorkers } : {}),
+    ...(opts.requiredNpmDeps && Object.keys(opts.requiredNpmDeps).length > 0
+      ? { requiredNpmDeps: opts.requiredNpmDeps }
+      : {}),
     bundle: {
       // Provisional values; patched after tar below. Server is authoritative.
       // sizeBytes is a non-zero placeholder so the embedded-in-tarball

@@ -520,6 +520,43 @@ export class WorkerCapabilityDeniedError extends Error {
   }
 }
 
+/**
+ * §4f batch 2 — Thrown by the host installer when a plugin's manifest
+ * `requiredNpmDeps` declares a module the host either does not have installed
+ * at all (`installedVersion` undefined) or has installed at a version outside
+ * the declared semver `declaredRange`. Install fails BEFORE any schema is
+ * created; the plugin row is never written. Mirrored shim-side so plugin
+ * tooling can catch programmatically.
+ */
+export class MissingNpmDepError extends Error {
+  constructor(
+    public readonly depName: string,
+    public readonly declaredRange: string,
+    public readonly installedVersion?: string,
+  ) {
+    super(
+      `Host missing npm dep: ${depName} (required: ${declaredRange}${
+        installedVersion ? `, installed: ${installedVersion}` : ", not installed"
+      })`,
+    );
+    this.name = "MissingNpmDepError";
+  }
+}
+
+/**
+ * §4f batch 2 — Thrown by the shim build helper (and by the registry Go
+ * validator at publish) when a plugin declares a `requiredNpmDeps` entry
+ * whose key is not on the closed allowlist (`ALLOWED_NPM_DEPS` shim-side,
+ * mirrored registry-side). Adding a new allowlist entry requires a PR to
+ * both surfaces.
+ */
+export class NpmDepNotAllowedError extends Error {
+  constructor(public readonly depName: string) {
+    super(`npm dep ${depName} is not on the registry allowlist`);
+    this.name = "NpmDepNotAllowedError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 4e.5 batch 1 — agents.* / integrations.list / connections.types /
 //                       workflow.create

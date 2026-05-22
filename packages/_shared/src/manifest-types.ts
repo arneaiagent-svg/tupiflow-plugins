@@ -156,5 +156,32 @@ export type Manifest = {
    * full design (isolation model, resource limits, capability gating).
    */
   workers?: WorkerSpec[];
+  /**
+   * Plugin-declared external npm dependencies (Phase 4f batch 2). Each key is
+   * a package name the plugin imports but does NOT bundle; the build helper
+   * auto-marks every declared name `external` in BOTH the main bundle and
+   * every worker bundle (alongside `BLESSED_HOST_MODULES`). Values are npm
+   * semver ranges (`^22.0.0`, `~0.5.0`, …) validated as parseable semver at
+   * registry publish time.
+   *
+   * Install-time gate (host side): the installer resolves each declared name
+   * from the host's `node_modules/` and compares the installed version
+   * against the declared range. A missing or out-of-range module fails the
+   * install with `MissingNpmDepError` BEFORE any plugin schema is created.
+   *
+   * Closed allowlist: package names are restricted to the registry-curated
+   * allowlist (mirrored shim-side as `ALLOWED_NPM_DEPS` in `build-helpers.ts`).
+   * Declaring an off-allowlist name throws `NpmDepNotAllowedError` at build
+   * time and is rejected at publish time by the registry Go validator.
+   * Adding a name to the allowlist requires a PR to BOTH the registry Go
+   * allowlist and the shim constant (drift caught by
+   * `scripts/check-npm-allowlist.sh`).
+   *
+   * Complements `BLESSED_HOST_MODULES`: blessed = always available + no
+   * opt-in needed (zod, hono, drizzle-orm, …); `requiredNpmDeps` = opt-in
+   * heavy parsing libs (jsdom, @mozilla/readability, turndown, pdf-parse,
+   * sharp, mammoth). See PHASE_4F_PLUGIN_DEPS_AND_WORKERS.md batch 2.
+   */
+  requiredNpmDeps?: Record<string, string>;
   bundle: ManifestBundle;
 };
