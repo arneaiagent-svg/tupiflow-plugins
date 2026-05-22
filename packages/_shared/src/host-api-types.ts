@@ -869,8 +869,12 @@ export interface ConnectionSendReplySpec {
    * `ChatMessageEvent.threadJson` / `RegistryStepContext.threadJson`
    * (both `unknown`); host accepts string or object and serializes as
    * needed. threadJson serves as proof of authorized context.
+   *
+   * Typed `NonNullable<unknown>` (anything except `null`/`undefined`) so
+   * forwarding an optional source like `ctx.threadJson` fails the type
+   * check until the plugin narrows it.
    */
-  threadJson: unknown;
+  threadJson: NonNullable<unknown>;
   /** Message text. Required, non-empty after trim. */
   text: string;
 }
