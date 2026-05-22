@@ -159,10 +159,31 @@ export type EmbedResult = {
  * - Application-level type validation. Validate every value's shape
  *   (length cap, JSON schema, etc.) at the boundary before binding —
  *   `$N` only handles SQL safety, not whether the value belongs there.
+ *
+ * Phase 4e.5 — optional `opts.schema` switches the per-tx search_path.
+ * Default `"plugin"` (per-plugin sandbox, identical to pre-4e.5 behaviour).
+ * `"public"` lets first-party plugins (`manifest.identity.publisher ===
+ * "tupiflow"`) reach core tables (`workflows`, `agents`, `integrations`,
+ * `workflow_executions`, etc.). Third-party publishers calling with
+ * `schema: "public"` are rejected with `DbPublicSchemaPublisherDeniedError`
+ * BEFORE any SET LOCAL emits (no information leak via timing or partial-
+ * emit). No new capability — the publisher gate is the security boundary.
  */
+export type DbCallOpts = {
+  schema?: "plugin" | "public";
+};
+
 export type PluginDb = {
-  read<T = unknown>(rawSql: string, params?: unknown[]): Promise<T[]>;
-  write(rawSql: string, params?: unknown[]): Promise<void>;
+  read<T = unknown>(
+    rawSql: string,
+    params?: unknown[],
+    opts?: DbCallOpts,
+  ): Promise<T[]>;
+  write(
+    rawSql: string,
+    params?: unknown[],
+    opts?: DbCallOpts,
+  ): Promise<void>;
 };
 
 export type PluginLogger = {
@@ -435,6 +456,96 @@ export type ExecutionLogEntry = {
   duration: string | null;
 };
 
+// ---------------------------------------------------------------------------
+// Phase 4e.5 batch 1 — agents.* / integrations.list / connections.types /
+//                       workflow.create
+// ---------------------------------------------------------------------------
+
+/**
+ * §4e.5 — Spec accepted by `api.workflow.create`. Publisher-gated to
+ * `manifest.identity.publisher === "tupiflow"` (third-party callers throw
+ * `CorePublishPublisherDeniedError`). `nodes` / `edges` MUST be arrays; the
+ * host does NOT deep-validate the React Flow graph (workflow-runner enforces
+ * structure at execution). Reuses `workflow.write` capability.
+ */
+export type WorkflowCreateSpec = {
+  name: string;
+  description?: string;
+  nodes: unknown[];
+  edges: unknown[];
+  visibility?: "private" | "public";
+  isSystem?: boolean;
+};
+
+/**
+ * §4e.5 — Per-agent spec for `api.agents.create`. Mirrors the columns the
+ * first-party `create-agent` step writes. Only scalar fields are accepted;
+ * tools / mcpTools / kbCollectionIds JSONB substructure goes through
+ * dedicated host paths in a later phase. `slug` MUST match
+ * `/^[a-z0-9][a-z0-9-]*$/`. Publisher-gated.
+ */
+export type AgentCreateSpec = {
+  slug: string;
+  name: string;
+  description?: string;
+  provider?: string;
+  model?: string;
+  body?: string;
+  historyLimit?: number | null;
+  maxToolSteps?: number | null;
+  showToolTrace?: boolean;
+  showReasoning?: boolean;
+  approvalTargetIntegrationId?: string | null;
+  approvalTargetChatId?: string | null;
+};
+
+/** §4e.5 — Patch accepted by `api.agents.update`. Same scalar-only contract. */
+export type AgentUpdatePatch = Partial<Omit<AgentCreateSpec, "slug">>;
+
+/**
+ * §4e.5 — Slim row projection returned by `api.agents.list / create / update`.
+ * Mirrors the first-party `list-agents` step's degraded shape.
+ */
+export type AgentListItem = {
+  slug: string;
+  name: string;
+  description: string | null;
+  provider: string | null;
+  model: string | null;
+  body: string;
+  historyLimit: number | null;
+  maxToolSteps: number | null;
+  showToolTrace: boolean;
+  showReasoning: boolean;
+  approvalTargetIntegrationId: string | null;
+  approvalTargetChatId: string | null;
+  updatedAt: string;
+};
+
+export type AgentListFilter = {
+  /** Filter by slug prefix; comparison is exact `startsWith`. */
+  slugPrefix?: string;
+};
+
+/**
+ * §4e.5 — Row projection returned by `api.integrations.list`. Always
+ * scoped to the caller's resolved userId (`PluginCallContext.userId`); the
+ * config / credentials never cross this boundary.
+ */
+export type IntegrationListItem = {
+  id: string;
+  userId: string;
+  name: string;
+  type: string;
+  isManaged: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type IntegrationListFilter = {
+  type?: string;
+};
+
 /**
  * §2.7 — Per-step execution context handed to registry-installable step
  * handlers via the `RegistryStepInput` envelope. Disjoint by design from
@@ -630,6 +741,43 @@ export type PluginHostAPI = {
    */
   registerTakeoverTarget(actionId: string, spec: TakeoverTargetSpec): void;
   /**
+   * §4e.5 — Agent CRUD namespace. `list` is read-only and tenant-scoped via
+   * the ambient `PluginCallContext` userId (reuses `db.read` capability).
+   * `create` / `update` / `delete` are publisher-gated to
+   * `manifest.identity.publisher === "tupiflow"`; third-party plugins
+   * receive `CorePublishPublisherDeniedError`. Mutations reuse `db.write`
+   * — the publisher gate is the security boundary, not a new capability
+   * string. After every mutation the host invalidates the process-local
+   * agent cache. Slug must match `/^[a-z0-9][a-z0-9-]*$/`; `$`-prefix +
+   * prototype-pollution keys are rejected (`AgentSpecInvalidError`).
+   * `AgentNotFoundError` for update/delete on a missing row.
+   */
+  agents: {
+    list(filter?: AgentListFilter): Promise<AgentListItem[]>;
+    create(spec: AgentCreateSpec): Promise<AgentListItem>;
+    update(slug: string, patch: AgentUpdatePatch): Promise<AgentListItem>;
+    delete(slug: string): Promise<void>;
+  };
+  /**
+   * §4e.5 — Integration list namespace. Tenant-scoped via the ambient
+   * `PluginCallContext` userId; cross-tenant rows are never returned.
+   * Reuses `db.read` capability. Optional `type` filter narrows by
+   * integration type (e.g. `"telegram"`).
+   */
+  integrations: {
+    list(filter?: IntegrationListFilter): Promise<IntegrationListItem[]>;
+  };
+  /**
+   * §4e.5 — Connection-types catalog. Returns the integrationType strings
+   * of every plugin that has called `api.registerConnection(spec)`.
+   * Read-only catalog data; reuses `db.read` (the data is not user-scoped
+   * row content). On a fresh host boot before all plugins have re-registered
+   * the list may be empty.
+   */
+  connections: {
+    types(): Promise<string[]>;
+  };
+  /**
    * §2.6 — Workflow CRUD namespace. `get`, `list`, and `getExecutionLogs`
    * require capability `workflow.read` AND `manifest.identity.publisher
    * === "tupiflow"` (third-party publishers throw
@@ -640,8 +788,13 @@ export type PluginHostAPI = {
    * reads return `null`/`[]` (host posture matches first-party "not
    * found or not owned"). `list({userId: otherId})` requires the
    * `admin:Workflow` ability.
+   *
+   * §4e.5 — `create(spec)` creates a workflow row owned by the caller's
+   * resolved userId. Publisher-gated; reuses `workflow.write`. Spec is
+   * shape-validated (`WorkflowCreateSpecInvalidError`).
    */
   workflow: {
+    create(spec: WorkflowCreateSpec): Promise<Workflow>;
     get(workflowId: string): Promise<Workflow | null>;
     list(opts?: WorkflowListOpts): Promise<WorkflowListPage>;
     createExecution(spec: CreateExecutionSpec): Promise<CreateExecutionResult>;

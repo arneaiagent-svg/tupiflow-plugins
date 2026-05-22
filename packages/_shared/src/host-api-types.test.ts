@@ -15,13 +15,18 @@
 // import side-effects.
 
 import type {
+  AgentCreateSpec,
+  AgentListItem,
+  AgentUpdatePatch,
   ChatMessageEvent,
   ConnectionInstance,
   CreateExecutionResult,
+  DbCallOpts,
   EmbedArgs,
   EmbedResult,
   ExecutionLogEntry,
   IntegrationConfigPatch,
+  IntegrationListItem,
   PluginHostAPI,
   RegistryStepInput,
   RouteContext,
@@ -32,6 +37,7 @@ import type {
   ToolCatalogContext,
   ToolCatalogEntry,
   Workflow,
+  WorkflowCreateSpec,
   WorkflowListPage,
 } from "./host-api-types.ts";
 
@@ -268,6 +274,63 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
       return { success: true, data: ctx.input };
     },
   );
+
+  // Phase 4e.5 batch 1 — db opts.schema + 7 new wrappers
+  const dbOpts: DbCallOpts = { schema: "public" };
+  const publicRows: unknown[] = await api.db.read(
+    "SELECT id FROM workflows WHERE user_id = $1",
+    ["u-1"],
+    dbOpts,
+  );
+  void publicRows;
+  await api.db.write(
+    "UPDATE agents SET name = $1 WHERE slug = $2",
+    ["Renamed", "support-bot"],
+    { schema: "public" },
+  );
+
+  // §4e.5 api.workflow.create — publisher-gated
+  const createSpec: WorkflowCreateSpec = {
+    name: "Generated flow",
+    nodes: [],
+    edges: [],
+    visibility: "private",
+  };
+  const created: Workflow = await api.workflow.create(createSpec);
+  void created;
+
+  // §4e.5 api.agents.{list,create,update,delete} — list reuses db.read,
+  // mutations publisher-gated. Slug must match /^[a-z0-9][a-z0-9-]*$/.
+  const agents: AgentListItem[] = await api.agents.list({
+    slugPrefix: "support",
+  });
+  void agents;
+  const newAgentSpec: AgentCreateSpec = {
+    slug: "demo-agent",
+    name: "Demo agent",
+    body: "system prompt",
+    historyLimit: 20,
+    showToolTrace: true,
+  };
+  const newAgent: AgentListItem = await api.agents.create(newAgentSpec);
+  void newAgent;
+  const agentPatch: AgentUpdatePatch = { name: "Renamed" };
+  const updated: AgentListItem = await api.agents.update(
+    "demo-agent",
+    agentPatch,
+  );
+  void updated;
+  await api.agents.delete("demo-agent");
+
+  // §4e.5 api.integrations.list — tenant-scoped
+  const integrations: IntegrationListItem[] = await api.integrations.list({
+    type: "telegram",
+  });
+  void integrations;
+
+  // §4e.5 api.connections.types — read-only catalog
+  const connectionTypes: string[] = await api.connections.types();
+  void connectionTypes;
 }
 
 export const __fixtureMarker = true;

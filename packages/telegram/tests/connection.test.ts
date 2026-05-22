@@ -79,10 +79,40 @@ function makeApi(args: {
     registerToolCatalogContributor: () => {},
     registerTakeoverTarget: () => {},
     workflow: {
+      create: async () => ({
+        id: "w-stub",
+        name: "stub",
+        description: null,
+        visibility: "private",
+        isSystem: false,
+        userId: "u-stub",
+        nodes: [],
+        edges: [],
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      }),
       get: async () => null,
       list: async () => ({ items: [], nextCursor: null }),
       createExecution: async () => ({ executionId: "exec-1", status: "running" }),
       getExecutionLogs: async () => [],
+    },
+    agents: {
+      list: async () => [],
+      create: async () => {
+        throw new Error("stub");
+      },
+      update: async () => {
+        throw new Error("stub");
+      },
+      delete: async () => {
+        /* stub */
+      },
+    },
+    integrations: {
+      list: async () => [],
+    },
+    connections: {
+      types: async () => [],
     },
   };
   return { api, fetchCredentialsCalls, fetchCalls };
