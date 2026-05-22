@@ -71,6 +71,8 @@ export type {
   WorkflowListPage,
 } from "./host-api-types.ts";
 
+export { assertPublicHost, assertPublicUrl } from "./ssrf.ts";
+
 export type {
   Manifest,
   ManifestAction,

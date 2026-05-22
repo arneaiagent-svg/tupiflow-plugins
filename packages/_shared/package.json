@@ -1,6 +1,6 @@
 {
   "name": "@tupiflow-plugins/shared",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./host-api-types": "./src/host-api-types.ts",
     "./manifest-types": "./src/manifest-types.ts",
-    "./build-helpers": "./src/build-helpers.ts"
+    "./build-helpers": "./src/build-helpers.ts",
+    "./ssrf": "./src/ssrf.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit",
