@@ -9,5 +9,11 @@
   },
   "dependencies": {
     "@tupiflow-plugins/shared": "workspace:*"
+  },
+  "//devDependencies": "jsdom + @mozilla/readability + turndown are used by src/workers/fetch-article.mjs. Esbuild externalises them at build (via build.mjs `requiredNpmDeps`) and the customer host's node_modules provides them at runtime — they are NOT shipped in the plugin tarball. Declared here so local development (IDE import resolution, future worker tests) sees them; semver ranges MUST satisfy what the tupiflow host package.json installs, otherwise the host installer rejects with MissingNpmDepError.",
+  "devDependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "jsdom": "^29.1.1",
+    "turndown": "^7.2.4"
   }
 }

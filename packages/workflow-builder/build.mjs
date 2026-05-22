@@ -923,10 +923,12 @@ await buildPlugin({
   ],
   // Phase 4f batch 2 — externalise heavy parsing deps. Names must be on the
   // shim's ALLOWED_NPM_DEPS list AND on the registry's Go mirror; host
-  // installer verifies presence + range at install time.
+  // installer verifies presence + range at install time. Ranges mirror the
+  // versions declared in the tupiflow host package.json — bumping these is
+  // a coordinated change with the host's dependency manifest.
   requiredNpmDeps: {
-    jsdom: "^22.0.0",
-    "@mozilla/readability": "^0.5.0",
-    turndown: "^7.1.0",
+    jsdom: "^29.1.1",
+    "@mozilla/readability": "^0.6.0",
+    turndown: "^7.2.4",
   },
 });
