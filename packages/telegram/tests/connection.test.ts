@@ -95,6 +95,13 @@ function makeApi(args: {
       list: async () => ({ items: [], nextCursor: null }),
       createExecution: async () => ({ executionId: "exec-1", status: "running" }),
       getExecutionLogs: async () => [],
+      listExecutions: async () => [],
+    },
+    actions: {
+      list: async () => [],
+    },
+    tools: {
+      list: async () => [],
     },
     agents: {
       list: async () => [],
@@ -110,6 +117,7 @@ function makeApi(args: {
     },
     integrations: {
       list: async () => [],
+      describe: async () => null,
     },
     connections: {
       types: async () => [],

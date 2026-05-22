@@ -23,6 +23,7 @@ export {
   WorkerTimeoutError,
 } from "./host-api-types.ts";
 export type {
+  Action,
   AgentCreateSpec,
   AgentListFilter,
   AgentListItem,
@@ -41,6 +42,7 @@ export type {
   IntegrationConfigPatch,
   IntegrationListFilter,
   IntegrationListItem,
+  IntegrationRegistrationSpec,
   IntegrationSpec,
   LlmCallArgs,
   LlmCallResult,
@@ -59,6 +61,7 @@ export type {
   TestHandler,
   TestIntegrationResult,
   TestIntegrationSpec,
+  Tool,
   ToolCatalogContext,
   ToolCatalogContributor,
   ToolCatalogEntry,
@@ -66,9 +69,12 @@ export type {
   Workflow,
   WorkerSpec,
   WorkflowCreateSpec,
+  WorkflowEdge,
+  WorkflowExecution,
   WorkflowListItem,
   WorkflowListOpts,
   WorkflowListPage,
+  WorkflowNode,
 } from "./host-api-types.ts";
 
 export { assertPublicHost, assertPublicUrl } from "./ssrf.ts";

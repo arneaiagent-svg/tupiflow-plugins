@@ -72,7 +72,7 @@ export type StepHandler = (input: unknown) => Promise<StepResult>;
 
 export type ToolHandler = (input: unknown) => Promise<unknown>;
 
-export type IntegrationSpec = {
+export type IntegrationRegistrationSpec = {
   type: string;
   label: string;
   actions: Array<{
@@ -84,6 +84,95 @@ export type IntegrationSpec = {
   }>;
   formFields: unknown[];
 };
+
+// ---------------------------------------------------------------------------
+// Phase 4e.5 batch 2 — catalog.read + extended host surfaces
+// ---------------------------------------------------------------------------
+
+/**
+ * Catalog-describe response shape returned by `api.integrations.describe`.
+ * Capability: `catalog.read`. Describes a registered integration type from
+ * the host's integration catalog — distinct from `IntegrationRegistrationSpec`
+ * which is passed to `api.registerIntegration` by the plugin at init time.
+ */
+export interface IntegrationSpec {
+  type: string;
+  label: string;
+  description?: string;
+  capabilities?: readonly string[];
+  credentialFields?: ReadonlyArray<{
+    key: string;
+    label: string;
+    type: "string" | "secret" | "boolean" | "number";
+    required: boolean;
+  }>;
+}
+
+/**
+ * Node in a typed workflow graph. Returned on `Workflow.nodes` when the host
+ * populates the richer shape (Phase 4e.5 batch 2). `config` carries
+ * node-specific settings; shape is node-type-dependent and opaque to plugins.
+ */
+export interface WorkflowNode {
+  id: string;
+  type: string;
+  label?: string;
+  config?: Record<string, unknown>;
+}
+
+/**
+ * Directed edge in a typed workflow graph. Returned on `Workflow.edges` when
+ * the host populates the richer shape (Phase 4e.5 batch 2).
+ */
+export interface WorkflowEdge {
+  source: string;
+  target: string;
+  condition?: string;
+}
+
+/**
+ * Execution row returned by `api.workflow.listExecutions`. Status values mirror
+ * the host's `workflow_executions.status` enum. `startedAt` / `completedAt`
+ * are ISO-8601 strings. Capability: `workflow.read`.
+ */
+export interface WorkflowExecution {
+  id: string;
+  workflowId: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+  /** ISO-8601 timestamp. */
+  startedAt: string;
+  /** ISO-8601 timestamp; absent while still running. */
+  completedAt?: string;
+  error?: string;
+}
+
+/**
+ * Action row returned by `api.actions.list`. Represents a registered step /
+ * action in the host's action catalog. `inputSchema` is a JSON Schema object;
+ * plugins treat it as opaque.
+ */
+export interface Action {
+  id: string;
+  slug: string;
+  label: string;
+  description?: string;
+  type: string;
+  /** JSON Schema; opaque to plugins. */
+  inputSchema?: unknown;
+}
+
+/**
+ * Tool row returned by `api.tools.list`. `owner` identifies whether the tool
+ * was registered by the host runtime or by a named plugin.
+ */
+export interface Tool {
+  id: string;
+  name: string;
+  description?: string;
+  /** JSON Schema; opaque to plugins. */
+  inputSchema?: unknown;
+  owner: { kind: "host" } | { kind: "plugin"; pluginName: string };
+}
 
 /**
  * LLM call arguments. Mirrors the canonical host shape; pass either
@@ -388,9 +477,17 @@ export type Workflow = {
   visibility: string;
   isSystem: boolean;
   userId: string;
-  /** Full React Flow shape. Trusted first-party only in v0 — see §2.6.4. */
-  nodes: unknown[];
-  edges: unknown[];
+  /**
+   * Typed node list (Phase 4e.5 batch 2). Populated by the host in batch 2;
+   * older plugins that only reference `Workflow` without iterating nodes are
+   * unaffected. Falls back to `unknown[]` on pre-batch-2 host builds.
+   */
+  nodes?: WorkflowNode[];
+  /**
+   * Typed edge list (Phase 4e.5 batch 2). Same population semantics as
+   * `nodes` above.
+   */
+  edges?: WorkflowEdge[];
   createdAt: string;
   updatedAt: string;
 };
@@ -738,7 +835,7 @@ export type PluginHostAPI = {
    * visible at integration save time rather than at first inbound event.
    */
   publicBaseUrl: string;
-  registerIntegration(spec: IntegrationSpec): void;
+  registerIntegration(spec: IntegrationRegistrationSpec): void;
   registerRoute(method: HttpMethod, path: string, handler: RouteHandler): void;
   /**
    * Register a step handler.
@@ -860,13 +957,18 @@ export type PluginHostAPI = {
     delete(slug: string): Promise<void>;
   };
   /**
-   * §4e.5 — Integration list namespace. Tenant-scoped via the ambient
-   * `PluginCallContext` userId; cross-tenant rows are never returned.
-   * Reuses `db.read` capability. Optional `type` filter narrows by
-   * integration type (e.g. `"telegram"`).
+   * §4e.5 — Integration list + catalog-describe namespace. `list` is
+   * tenant-scoped via the ambient `PluginCallContext` userId; cross-tenant
+   * rows are never returned. Reuses `db.read` capability. Optional `type`
+   * filter narrows by integration type (e.g. `"telegram"`).
+   *
+   * `describe` returns the catalog spec for a registered integration type
+   * (registered via `api.registerIntegration`). Returns `null` when the
+   * type is unknown. Capability: `catalog.read`.
    */
   integrations: {
     list(filter?: IntegrationListFilter): Promise<IntegrationListItem[]>;
+    describe(type: string): Promise<IntegrationSpec | null>;
   };
   /**
    * §4e.5 — Connection-types catalog. Returns the integrationType strings
@@ -900,6 +1002,31 @@ export type PluginHostAPI = {
     list(opts?: WorkflowListOpts): Promise<WorkflowListPage>;
     createExecution(spec: CreateExecutionSpec): Promise<CreateExecutionResult>;
     getExecutionLogs(executionId: string): Promise<ExecutionLogEntry[]>;
+    /**
+     * List execution rows for a workflow. Capability: `workflow.read`.
+     * `limit` defaults to 50, capped at 200 host-side (no throw on overflow).
+     * Results are ordered by `startedAt` descending.
+     */
+    listExecutions(args: {
+      workflowId: string;
+      limit?: number;
+    }): Promise<WorkflowExecution[]>;
+  };
+  /**
+   * §4e.5 batch 2 — Action catalog namespace. Returns every registered action
+   * visible to the caller. Read-only; reuses `db.read` capability. Capability:
+   * `catalog.read`.
+   */
+  actions: {
+    list(): Promise<Action[]>;
+  };
+  /**
+   * §4e.5 batch 2 — Tool catalog namespace. Returns every registered tool
+   * visible to the caller (host-owned + plugin-contributed). Read-only; reuses
+   * `db.read` capability. Capability: `catalog.read`.
+   */
+  tools: {
+    list(): Promise<Tool[]>;
   };
   /**
    * §4f batch 1 — Dispatch a unit of work to a plugin-defined worker bundle.

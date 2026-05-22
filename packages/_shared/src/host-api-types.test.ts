@@ -22,6 +22,7 @@ import {
   WorkerTimeoutError,
 } from "./host-api-types.ts";
 import type {
+  Action,
   AgentCreateSpec,
   AgentListItem,
   AgentUpdatePatch,
@@ -34,6 +35,7 @@ import type {
   ExecutionLogEntry,
   IntegrationConfigPatch,
   IntegrationListItem,
+  IntegrationSpec,
   PluginHostAPI,
   RegistryStepInput,
   RouteContext,
@@ -41,11 +43,13 @@ import type {
   TakeoverTargetSpec,
   TestIntegrationResult,
   TestIntegrationSpec,
+  Tool,
   ToolCatalogContext,
   ToolCatalogEntry,
   WorkerSpec,
   Workflow,
   WorkflowCreateSpec,
+  WorkflowExecution,
   WorkflowListPage,
 } from "./host-api-types.ts";
 
@@ -247,7 +251,8 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   const workflow: Workflow | null = await api.workflow.get("wf-1");
   if (workflow !== null) {
     const ownerId: string = workflow.userId;
-    const nodeCount: number = workflow.nodes.length;
+    // nodes is optional (WorkflowNode[] | undefined) since batch 2
+    const nodeCount: number = workflow.nodes?.length ?? 0;
     void ownerId;
     void nodeCount;
   }
@@ -403,6 +408,31 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   const notAllowedAsError: Error = notAllowed;
   void missingAsError;
   void notAllowedAsError;
+
+  // Phase 4e.5 batch 2 — new host surfaces
+  // workflow.listExecutions
+  const executions: WorkflowExecution[] = await api.workflow.listExecutions({
+    workflowId: "wf-1",
+    limit: 25,
+  });
+  void executions;
+
+  // api.actions.list
+  const actions: Action[] = await api.actions.list();
+  void actions;
+
+  // api.tools.list
+  const tools: Tool[] = await api.tools.list();
+  void tools;
+
+  // api.integrations.describe — returns IntegrationSpec | null
+  const spec: IntegrationSpec | null = await api.integrations.describe("telegram");
+  if (spec !== null) {
+    const iType: string = spec.type;
+    const iLabel: string = spec.label;
+    void iType;
+    void iLabel;
+  }
 }
 
 export const __fixtureMarker = true;
