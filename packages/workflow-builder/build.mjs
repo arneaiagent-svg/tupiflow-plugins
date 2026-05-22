@@ -680,11 +680,69 @@ const actions = [
     },
   },
 
-  // fetch-article disabled v1: depends on jsdom + @mozilla/readability + turndown.
-  // Registry has no requiredNpmDeps manifest field; bundling them blows past
-  // the 10 MB bundle cap. Re-enable once either the registry adds dep declaration
-  // OR a small jsdom-free implementation lands. Step impl stays in
-  // src/steps/fetch-article.ts for now (not imported by src/index.ts).
+  // Phase 4f batch 1/2 — fetch-article: worker-backed readable article extractor.
+  // Heavy deps (jsdom, @mozilla/readability, turndown) are externalised via
+  // requiredNpmDeps below and live in the worker bundle (workers/fetch-article.mjs).
+  {
+    slug: "fetch-article",
+    label: "Fetch Article (Readable)",
+    description:
+      "Fetch ONE URL and return the readable article body as markdown. Single-page extraction only — does not crawl, does not follow links, does not dump site structure.",
+    category: "Workflow Builder",
+    stepFunction: "wfFetchArticleStep",
+    configFields: [
+      {
+        key: "url",
+        label: "URL",
+        type: "template-input",
+        required: true,
+      },
+      { key: "timeoutMs", label: "Timeout (ms)", type: "number" },
+      {
+        key: "disableBrowserHeaders",
+        label: "Disable browser headers",
+        type: "select",
+      },
+    ],
+    outputFields: [
+      { field: "markdown", description: "Article body converted to markdown" },
+      { field: "title", description: "Extracted article title (may be null)" },
+      { field: "byline", description: "Extracted byline/author (may be null)" },
+      { field: "excerpt", description: "Short summary from Readability (may be null)" },
+      { field: "length", description: "Length of markdown in characters" },
+      { field: "contentType", description: "Response content-type header" },
+      { field: "url", description: "URL that was requested" },
+      { field: "finalUrl", description: "URL after redirects" },
+    ],
+    tool: {
+      name: "fetch_article",
+      description:
+        "Fetch ONE page's readable article body as markdown (Readability + Turndown). Single page only — no crawl, no link-follow. Use for blog posts, news, docs, wiki, READMEs. NOT for homepages, sitemaps, dashboards, or site structure (returns `not_article` — use `fetch` for raw HTML). Runs in an isolated worker thread (jsdom stays off the request thread). Returns markdown + title/byline/excerpt/length, or reason: `not_article`|`http_error`|`timeout`|`unsupported_content_type`|`response_too_large`|`fetch_failed`.",
+      inputSchemaJson: JSON.stringify({
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            format: "uri",
+            description: "Absolute http(s) URL of the article/doc page to read.",
+          },
+          timeoutMs: {
+            type: "integer",
+            minimum: 1,
+            maximum: 60_000,
+            description: "Request timeout in ms (default 15000, max 60000).",
+          },
+          disableBrowserHeaders: {
+            type: "boolean",
+            description:
+              "Set true to send a raw request without the default Mac Chrome browser headers. Default false.",
+          },
+        },
+        required: ["url"],
+        additionalProperties: false,
+      }),
+    },
+  },
   {
     slug: "fetch-models",
     label: "Fetch Models (AI Provider)",
@@ -844,9 +902,11 @@ await buildPlugin({
   srcEntry: "src/index.ts",
   distDir: resolve(root, "dist"),
   actions,
-  // Phase 4f batch 1 — compute-hash worker: sha256 of a string.
-  // Contract proof: pure compute, no blessed-module imports, no requiredNpmDeps.
-  // memLimitMb + timeoutMs are intentionally minimal for a hash-only worker.
+  // Phase 4f batch 1 — workers.
+  // compute-hash: pure compute (sha256), no blessed-module imports, no requiredNpmDeps.
+  // fetch-article: jsdom + @mozilla/readability + turndown externalised via
+  //   requiredNpmDeps below; resolved at runtime from the customer host's
+  //   node_modules. Worker bundle stays slim (orchestration code only).
   workers: [
     {
       id: "compute-hash",
@@ -854,5 +914,19 @@ await buildPlugin({
       memLimitMb: 64,
       timeoutMs: 5000,
     },
+    {
+      id: "fetch-article",
+      entry: "src/workers/fetch-article.mjs",
+      memLimitMb: 256,
+      timeoutMs: 90_000,
+    },
   ],
+  // Phase 4f batch 2 — externalise heavy parsing deps. Names must be on the
+  // shim's ALLOWED_NPM_DEPS list AND on the registry's Go mirror; host
+  // installer verifies presence + range at install time.
+  requiredNpmDeps: {
+    jsdom: "^22.0.0",
+    "@mozilla/readability": "^0.5.0",
+    turndown: "^7.1.0",
+  },
 });

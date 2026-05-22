@@ -36,6 +36,12 @@ entry       = "workers/compute-hash.mjs"
 memLimitMb  = 64
 timeoutMs   = 5000
 
+[[workers]]
+id          = "fetch-article"
+entry       = "workers/fetch-article.mjs"
+memLimitMb  = 256
+timeoutMs   = 90000
+
 [[takeoverTargets]]
 actionId    = "request-human-takeover"
 label       = "Request human takeover"
