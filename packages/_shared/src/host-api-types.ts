@@ -862,14 +862,15 @@ export interface ConnectionSendReplySpec {
   /** Target integration row id (must be a connection-type integration). */
   integrationId: string;
   /**
-   * Thread context. If omitted, the host resolves the row default
-   * threadJson from connection_thread_history (latest by updatedAt).
-   * Plugins that already loaded a row should pass it through to avoid
-   * the extra DB read. Typed `unknown` to match the adapter-JSON shape
-   * exposed elsewhere (`ChatMessageEvent.threadJson`, `RegistryStepContext.threadJson`);
-   * host accepts string or object and serializes as needed.
+   * Adapter-JSON thread context. Required — the host does NOT fall back
+   * to "latest thread for this integration" because that could misroute
+   * a reply to an unrelated conversation when an integration has
+   * multiple active threads. Pass the same value plugins receive on
+   * `ChatMessageEvent.threadJson` / `RegistryStepContext.threadJson`
+   * (both `unknown`); host accepts string or object and serializes as
+   * needed. threadJson serves as proof of authorized context.
    */
-  threadJson?: unknown;
+  threadJson: unknown;
   /** Message text. Required, non-empty after trim. */
   text: string;
 }
