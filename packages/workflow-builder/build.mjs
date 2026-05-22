@@ -796,7 +796,7 @@ const actions = [
       { key: "timeoutMs", label: "Timeout (ms)", type: "number" },
     ],
     outputFields: [
-      { field: "", description: "Whatever the snippet returns (must be JSON-serializable)." },
+      { field: "result", description: "Whatever the snippet returns (must be JSON-serializable)." },
     ],
     tool: {
       name: "run_js",

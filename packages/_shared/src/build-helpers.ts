@@ -188,6 +188,7 @@ type PluginToml = {
   };
   icon?: { kind: "svg"; path: string } | { kind: "lucide"; name: string };
   capabilities?: string[];
+  takeoverTargets?: Array<{ actionId: string; label: string; description?: string }>;
 };
 
 export async function buildPlugin(
@@ -389,6 +390,9 @@ export async function buildPlugin(
     ...(manifestWorkers.length > 0 ? { workers: manifestWorkers } : {}),
     ...(opts.requiredNpmDeps && Object.keys(opts.requiredNpmDeps).length > 0
       ? { requiredNpmDeps: opts.requiredNpmDeps }
+      : {}),
+    ...(toml.takeoverTargets && toml.takeoverTargets.length > 0
+      ? { takeoverTargets: toml.takeoverTargets }
       : {}),
     bundle: {
       // Provisional values; patched after tar below. Server is authoritative.
