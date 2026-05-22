@@ -1,0 +1,31 @@
+capabilities = [
+  "takeover.register",
+  "workflow.read",
+  "workflow.write",
+  "db.read",
+  "db.write",
+  "llm.call",
+  "secrets.read",
+  "net.fetch",
+]
+
+toolCatalogContributor = false
+
+[identity]
+name        = "workflow-builder"
+type        = "workflow-builder"
+version     = "1.0.0"
+publisher   = "tupiflow"
+description = "Internal tools that let an AI agent introspect this app: agents, actions, workflows, executions, connections, tools, plus core meta-actions like human-takeover."
+
+[runtime]
+min_tupiflow_version = "0.0.0"
+
+[icon]
+kind = "svg"
+path = "icon.svg"
+
+[[takeoverTargets]]
+actionId    = "request-human-takeover"
+label       = "Request human takeover"
+description = "Hand the conversation over to a human operator from a chat connection workflow."

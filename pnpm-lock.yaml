@@ -41,6 +41,12 @@ importers:
         specifier: workspace:*
         version: link:../_shared
 
+  packages/workflow-builder:
+    dependencies:
+      '@tupiflow-plugins/shared':
+        specifier: workspace:*
+        version: link:../_shared
+
 packages:
 
   '@babel/runtime@7.29.2':
