@@ -1,16 +1,17 @@
 // wfCreateAgentStep — registry port of plugins/workflow-builder/steps/create-agent.
 //
-// Original implementation called the host's `agents.ts` helpers (saveAgent,
-// saveAgentTools, saveAgentMcpTools, saveAgentKbCollections) which internally
-// invoked Drizzle against the cross-cutting `agents` table and warmed
-// process-local caches. The registry port reimplements the same writes via
-// `api.db.write` (cross-cutting writes allowed for publisher="tupiflow" per
-// the Phase 4e.3 gate). The host's agent cache is NOT invalidated here — the
-// host owns cache lifecycle and only invalidates on its own writes; that gap
-// is acceptable in v0 because every agent read goes through the same
-// `api.db.read` surface that respects table-level transaction isolation.
+// v1.1.0 — wired to the Phase 4e.5 batch-1 `api.agents.create` host surface.
+// Scalar columns (slug, name, provider, model, body, etc.) go through the host
+// wrapper which is publisher-gated and handles agent-cache invalidation.
+// JSONB sub-columns (tools, mcp_tools, kb_collection_ids) are written via a
+// separate `api.db.write({ schema: "public" })` call because the host has no
+// dedicated surface for them yet (scheduled for a later phase).
+//
+// Local guards retained: slug regex and the `default` protected-slug check
+// remain client-side for cleaner error messages than AgentSpecInvalidError.
 
 import type {
+  AgentCreateSpec,
   RegistryStepInput,
   StepResult,
 } from "@tupiflow-plugins/shared/host-api-types";
@@ -221,9 +222,12 @@ export async function wfCreateAgentStep({
       };
     }
 
+    // Pre-check for duplicates — gives a clean error message instead of
+    // surfacing the raw Postgres unique-constraint text from api.agents.create.
     const existing = await api.db.read<{ slug: string }>(
       "SELECT slug FROM agents WHERE slug = $1 LIMIT 1",
-      [slug]
+      [slug],
+      { schema: "public" }
     );
     if (existing.length > 0) {
       return {
@@ -232,74 +236,49 @@ export async function wfCreateAgentStep({
       };
     }
 
+    const spec: AgentCreateSpec = {
+      slug,
+      name,
+      description: input.description,
+      provider: input.provider,
+      model: input.model,
+      body: input.body ?? "",
+      historyLimit:
+        typeof input.historyLimit === "number" ? input.historyLimit : null,
+      maxToolSteps:
+        typeof input.maxToolSteps === "number" ? input.maxToolSteps : null,
+      showToolTrace: input.showToolTrace === true,
+      showReasoning: input.showReasoning === true,
+      approvalTargetIntegrationId:
+        input.approvalTargetIntegrationId?.trim() || null,
+      approvalTargetChatId: input.approvalTargetChatId?.trim() || null,
+    };
+
+    const agent = await api.agents.create(spec);
+
+    // JSONB sub-columns (tools / mcpTools / kbCollectionIds) go through a
+    // separate UPDATE because api.agents.create is scalar-only in 4e.5 batch 1.
     const tools = sanitizeTools(input.tools);
     const mcpTools = sanitizeMcpSelections(input.mcpTools);
     const kbCollectionIds = sanitizeKbCollectionIds(input.kbCollectionIds);
 
-    const description = input.description ?? null;
-    const provider = input.provider ?? null;
-    const model = input.model ?? null;
-    const body = input.body ?? "";
-    const historyLimit =
-      typeof input.historyLimit === "number" ? input.historyLimit : null;
-    const maxToolSteps =
-      typeof input.maxToolSteps === "number" ? input.maxToolSteps : null;
-    const showToolTrace = input.showToolTrace === true;
-    const showReasoning = input.showReasoning === true;
-    const approvalTargetIntegrationId =
-      input.approvalTargetIntegrationId?.trim() || null;
-    const approvalTargetChatId = input.approvalTargetChatId?.trim() || null;
-
-    await api.db.write(
-      `INSERT INTO agents (
-         slug, name, description, provider, model, body,
-         history_limit, max_tool_steps, show_tool_trace, show_reasoning,
-         tools, kb_collection_ids, mcp_tools,
-         approval_target_integration_id, approval_target_chat_id,
-         created_at, updated_at
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6,
-         $7, $8, $9, $10,
-         $11::jsonb, $12::jsonb, $13::jsonb,
-         $14, $15,
-         NOW(), NOW()
-       )`,
-      [
-        slug,
-        name,
-        description,
-        provider,
-        model,
-        body,
-        historyLimit,
-        maxToolSteps,
-        showToolTrace,
-        showReasoning,
-        JSON.stringify(tools),
-        JSON.stringify(kbCollectionIds),
-        JSON.stringify(mcpTools),
-        approvalTargetIntegrationId,
-        approvalTargetChatId,
-      ]
-    );
-
-    const rows = await api.db.read<{
-      slug: string;
-      name: string;
-      description: string | null;
-      provider: string | null;
-      model: string | null;
-      updated_at: Date;
-    }>(
-      "SELECT slug, name, description, provider, model, updated_at FROM agents WHERE slug = $1 LIMIT 1",
-      [slug]
-    );
-    const row = rows[0];
-    const updatedAt = row
-      ? row.updated_at instanceof Date
-        ? row.updated_at.toISOString()
-        : String(row.updated_at)
-      : new Date().toISOString();
+    if (tools.length > 0 || mcpTools.length > 0 || kbCollectionIds.length > 0) {
+      await api.db.write(
+        `UPDATE agents
+           SET tools              = $2::jsonb,
+               mcp_tools         = $3::jsonb,
+               kb_collection_ids = $4::jsonb,
+               updated_at        = NOW()
+         WHERE slug = $1`,
+        [
+          slug,
+          JSON.stringify(tools),
+          JSON.stringify(mcpTools),
+          JSON.stringify(kbCollectionIds),
+        ],
+        { schema: "public" }
+      );
+    }
 
     const mcpToolCount = mcpTools.reduce(
       (sum, sel) => sum + sel.toolNames.length,
@@ -310,13 +289,13 @@ export async function wfCreateAgentStep({
       data: {
         slug,
         name,
-        description: description ?? undefined,
-        provider: provider ?? undefined,
-        model: model ?? undefined,
+        description: agent.description ?? undefined,
+        provider: agent.provider ?? undefined,
+        model: agent.model ?? undefined,
         toolCount: tools.length,
         mcpToolCount,
         kbCollectionCount: kbCollectionIds.length,
-        updatedAt,
+        updatedAt: agent.updatedAt,
       },
     };
   } catch (error) {

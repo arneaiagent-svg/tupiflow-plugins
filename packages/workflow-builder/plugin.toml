@@ -14,7 +14,7 @@ toolCatalogContributor = false
 [identity]
 name        = "workflow-builder"
 type        = "workflow-builder"
-version     = "1.0.0"
+version     = "1.1.0"
 publisher   = "tupiflow"
 description = "Internal tools that let an AI agent introspect this app: agents, actions, workflows, executions, connections, tools, plus core meta-actions like human-takeover."
 

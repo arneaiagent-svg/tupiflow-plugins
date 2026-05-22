@@ -1,15 +1,11 @@
 // Registry-port of plugins/workflow-builder/steps/list-integrations.{ts,impl.ts}.
 //
-// Reads the cross-cutting `public.integrations` table via the plugin host's
-// `api.db.read`. The plugin's `SET LOCAL search_path` is bound to
-// `plugin_workflow-builder` so we fully qualify `public.integrations` to
-// reach the cross-schema table — the host's plugin role shares the app DB
-// user so cross-schema reads succeed at the SQL layer.
-//
-// Source impl additionally decorated each row with plugin spec metadata
-// (label, description, action list) pulled from the in-memory plugin
-// registry. The registry plugin has no access to that registry, so those
-// fields fall back to type-derived strings and an empty action list.
+// v1.1.0 — wired to the Phase 4e.5 batch-1 `api.integrations.list` host
+// surface. The host scopes rows to the caller's resolved userId and accepts
+// an optional `{ type }` filter. Plugin spec metadata (label, description,
+// action list) is still not reachable from a registry sandbox, so those
+// fields continue to degrade to the type string / empty values until a
+// future surface exposes the in-memory plugin registry.
 
 import type {
   RegistryStepInput,
@@ -20,14 +16,6 @@ interface WfListIntegrationsTypedInput {
   type?: string;
 }
 
-interface IntegrationRow {
-  id: string;
-  name: string;
-  type: string;
-  is_managed: boolean | null;
-  created_at: string | Date;
-}
-
 export async function wfListIntegrationsStep(
   input: RegistryStepInput
 ): Promise<StepResult> {
@@ -36,19 +24,11 @@ export async function wfListIntegrationsStep(
   try {
     const typeFilter = typedInput.type?.trim().toLowerCase();
 
-    const rows = await api.db.read<IntegrationRow>(
-      `SELECT id, name, type, is_managed, created_at
-       FROM public.integrations
-       WHERE user_id = $1
-       ORDER BY name ASC`,
-      [ctx.userId]
+    const rows = await api.integrations.list(
+      typeFilter ? { type: typeFilter } : undefined
     );
 
-    const filtered = typeFilter
-      ? rows.filter((r) => r.type.toLowerCase() === typeFilter)
-      : rows;
-
-    const enriched = filtered.map((r) => ({
+    const enriched = rows.map((r) => ({
       integrationId: r.id,
       name: r.name,
       type: r.type,
@@ -57,11 +37,8 @@ export async function wfListIntegrationsStep(
       // label without crashing.
       label: r.type,
       description: "",
-      isManaged: Boolean(r.is_managed),
-      createdAt:
-        r.created_at instanceof Date
-          ? r.created_at.toISOString()
-          : new Date(r.created_at).toISOString(),
+      isManaged: Boolean(r.isManaged),
+      createdAt: r.createdAt,
       actions: [] as Array<{
         actionId: string;
         slug: string;

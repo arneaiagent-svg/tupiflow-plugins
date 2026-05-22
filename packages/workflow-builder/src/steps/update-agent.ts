@@ -1,13 +1,17 @@
 // wfUpdateAgentStep — registry port of plugins/workflow-builder/steps/update-agent.
 //
-// Same translation pattern as create-agent.ts: the original called the host's
-// `agents.ts` helpers (saveAgent + saveAgentTools / saveAgentMcpTools /
-// saveAgentKbCollections) which wrote to the cross-cutting `agents` table.
-// We perform a SELECT-then-UPDATE here through `api.db.read` / `api.db.write`
-// to preserve the "undefined = leave unchanged, null = clear" semantics the
-// upstream `mergeNullable` helper enforces.
+// v1.1.0 — wired to the Phase 4e.5 batch-1 `api.agents.update` host surface.
+// Scalar columns go through the host wrapper (publisher-gated, cache-invalidated).
+// JSONB sub-columns (tools / mcpTools / kbCollectionIds) still use
+// `api.db.{read,write}({ schema: "public" })` because the host has no dedicated
+// surface for them yet. The existing JSONB rows are read up-front to support the
+// "undefined = leave unchanged, provided array = replace" merge semantics that
+// the original step enforced, and to report accurate toolCount/mcpToolCount in
+// the response regardless of whether the caller touched those fields.
 
 import type {
+  AgentListItem,
+  AgentUpdatePatch,
   RegistryStepInput,
   StepResult,
 } from "@tupiflow-plugins/shared/host-api-types";
@@ -73,23 +77,10 @@ interface McpToolSelectionPersisted {
   toolNames: string[];
 }
 
-interface AgentRowRaw {
-  slug: string;
-  name: string;
-  description: string | null;
-  provider: string | null;
-  model: string | null;
-  body: string | null;
-  history_limit: number | null;
-  max_tool_steps: number | null;
-  show_tool_trace: boolean | null;
-  show_reasoning: boolean | null;
+interface JsonbRow {
   tools: unknown;
-  kb_collection_ids: unknown;
   mcp_tools: unknown;
-  approval_target_integration_id: string | null;
-  approval_target_chat_id: string | null;
-  updated_at: Date | string;
+  kb_collection_ids: unknown;
 }
 
 function sanitizeTools(
@@ -206,16 +197,6 @@ function sanitizeKbCollectionIds(ids: string[]): string[] {
   return out;
 }
 
-function mergeNullable<T>(
-  next: T | null | undefined,
-  existing: T | null
-): T | null {
-  if (next === undefined) {
-    return existing;
-  }
-  return next;
-}
-
 export async function wfUpdateAgentStep({
   api,
   ctx,
@@ -229,114 +210,101 @@ export async function wfUpdateAgentStep({
         error: { message: "slug is required" },
       };
     }
-    const rows = await api.db.read<AgentRowRaw>(
-      `SELECT slug, name, description, provider, model, body,
-              history_limit, max_tool_steps, show_tool_trace, show_reasoning,
-              tools, kb_collection_ids, mcp_tools,
-              approval_target_integration_id, approval_target_chat_id, updated_at
-         FROM agents WHERE slug = $1 LIMIT 1`,
-      [slug]
+
+    // Read existing JSONB cols up-front for merge logic + consistent count
+    // reporting in the response (api.agents.update returns AgentListItem which
+    // omits JSONB sub-columns).
+    const rows = await api.db.read<JsonbRow>(
+      "SELECT tools, mcp_tools, kb_collection_ids FROM agents WHERE slug = $1 LIMIT 1",
+      [slug],
+      { schema: "public" }
     );
-    const existing = rows[0];
-    if (!existing) {
+    if (rows.length === 0) {
       return {
         success: false,
         error: { message: `Agent "${slug}" not found` },
       };
     }
+    const existingJsonb = rows[0];
 
-    const name = input.name?.trim() || existing.name;
-    const description =
-      input.description === undefined ? existing.description : input.description;
-    const provider =
-      input.provider === undefined ? existing.provider : input.provider;
-    const model = input.model === undefined ? existing.model : input.model;
-    const body = input.body === undefined ? (existing.body ?? "") : input.body;
-    const historyLimit = mergeNullable(input.historyLimit, existing.history_limit);
-    const maxToolSteps = mergeNullable(input.maxToolSteps, existing.max_tool_steps);
-    const showToolTrace =
-      input.showToolTrace === undefined
-        ? existing.show_tool_trace === true
-        : input.showToolTrace === true;
-    const showReasoning =
-      input.showReasoning === undefined
-        ? existing.show_reasoning === true
-        : input.showReasoning === true;
-    const approvalTargetIntegrationId = mergeNullable(
-      input.approvalTargetIntegrationId,
-      existing.approval_target_integration_id
-    );
-    const approvalTargetChatId = mergeNullable(
-      input.approvalTargetChatId,
-      existing.approval_target_chat_id
-    );
+    // Build scalar patch — only pass fields that are explicitly provided in
+    // the input (undefined means "leave unchanged" at the host layer).
+    const patch: AgentUpdatePatch = {};
+    if (input.name !== undefined) {
+      const trimmed = input.name.trim();
+      if (trimmed) {
+        patch.name = trimmed;
+      }
+    }
+    if (input.description !== undefined) patch.description = input.description;
+    if (input.provider !== undefined) patch.provider = input.provider;
+    if (input.model !== undefined) patch.model = input.model;
+    if (input.body !== undefined) patch.body = input.body;
+    if (input.historyLimit !== undefined) patch.historyLimit = input.historyLimit;
+    if (input.maxToolSteps !== undefined) patch.maxToolSteps = input.maxToolSteps;
+    if (input.showToolTrace !== undefined)
+      patch.showToolTrace = input.showToolTrace === true;
+    if (input.showReasoning !== undefined)
+      patch.showReasoning = input.showReasoning === true;
+    if (input.approvalTargetIntegrationId !== undefined)
+      patch.approvalTargetIntegrationId = input.approvalTargetIntegrationId;
+    if (input.approvalTargetChatId !== undefined)
+      patch.approvalTargetChatId = input.approvalTargetChatId;
 
-    // Tools / mcpTools / kbCollectionIds: provided arrays REPLACE the row's
-    // current value; absent fields preserve the existing row state. The
-    // upstream helpers performed each as a separate UPDATE; we fold them all
-    // into one statement here.
+    // Update scalars via the host surface (publisher-gated + cache invalidation).
+    let agent: AgentListItem;
+    try {
+      agent = await api.agents.update(slug, patch);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AgentNotFoundError") {
+        return {
+          success: false,
+          error: { message: `Agent "${slug}" not found` },
+        };
+      }
+      throw err;
+    }
+
+    // Merge JSONB cols: provided arrays replace; absent fields preserve
+    // existing row state.
     const tools = Array.isArray(input.tools)
       ? sanitizeTools(input.tools)
-      : Array.isArray(existing.tools)
-        ? (existing.tools as AgentToolConfigPersisted[])
+      : Array.isArray(existingJsonb.tools)
+        ? (existingJsonb.tools as AgentToolConfigPersisted[])
         : [];
     const mcpTools = Array.isArray(input.mcpTools)
       ? sanitizeMcpSelections(input.mcpTools)
-      : Array.isArray(existing.mcp_tools)
-        ? (existing.mcp_tools as McpToolSelectionPersisted[])
+      : Array.isArray(existingJsonb.mcp_tools)
+        ? (existingJsonb.mcp_tools as McpToolSelectionPersisted[])
         : [];
     const kbCollectionIds = Array.isArray(input.kbCollectionIds)
       ? sanitizeKbCollectionIds(input.kbCollectionIds)
-      : Array.isArray(existing.kb_collection_ids)
-        ? (existing.kb_collection_ids as string[])
+      : Array.isArray(existingJsonb.kb_collection_ids)
+        ? (existingJsonb.kb_collection_ids as string[])
         : [];
 
-    await api.db.write(
-      `UPDATE agents SET
-         name = $2,
-         description = $3,
-         provider = $4,
-         model = $5,
-         body = $6,
-         history_limit = $7,
-         max_tool_steps = $8,
-         show_tool_trace = $9,
-         show_reasoning = $10,
-         tools = $11::jsonb,
-         kb_collection_ids = $12::jsonb,
-         mcp_tools = $13::jsonb,
-         approval_target_integration_id = $14,
-         approval_target_chat_id = $15,
-         updated_at = NOW()
-       WHERE slug = $1`,
-      [
-        slug,
-        name,
-        description,
-        provider,
-        model,
-        body,
-        historyLimit,
-        maxToolSteps,
-        showToolTrace,
-        showReasoning,
-        JSON.stringify(tools),
-        JSON.stringify(kbCollectionIds),
-        JSON.stringify(mcpTools),
-        approvalTargetIntegrationId,
-        approvalTargetChatId,
-      ]
-    );
-
-    const refreshed = await api.db.read<{ updated_at: Date | string }>(
-      "SELECT updated_at FROM agents WHERE slug = $1 LIMIT 1",
-      [slug]
-    );
-    const updatedAt = refreshed[0]?.updated_at
-      ? refreshed[0].updated_at instanceof Date
-        ? refreshed[0].updated_at.toISOString()
-        : String(refreshed[0].updated_at)
-      : new Date().toISOString();
+    // Write JSONB cols only when at least one was provided in the input.
+    if (
+      input.tools !== undefined ||
+      input.mcpTools !== undefined ||
+      input.kbCollectionIds !== undefined
+    ) {
+      await api.db.write(
+        `UPDATE agents
+           SET tools              = $2::jsonb,
+               mcp_tools         = $3::jsonb,
+               kb_collection_ids = $4::jsonb,
+               updated_at        = NOW()
+         WHERE slug = $1`,
+        [
+          slug,
+          JSON.stringify(tools),
+          JSON.stringify(mcpTools),
+          JSON.stringify(kbCollectionIds),
+        ],
+        { schema: "public" }
+      );
+    }
 
     const mcpToolCount = mcpTools.reduce(
       (sum, sel) => sum + sel.toolNames.length,
@@ -346,14 +314,14 @@ export async function wfUpdateAgentStep({
       success: true,
       data: {
         slug,
-        name,
-        description: description ?? undefined,
-        provider: provider ?? undefined,
-        model: model ?? undefined,
+        name: agent.name,
+        description: agent.description ?? undefined,
+        provider: agent.provider ?? undefined,
+        model: agent.model ?? undefined,
         toolCount: tools.length,
         mcpToolCount,
         kbCollectionCount: kbCollectionIds.length,
-        updatedAt,
+        updatedAt: agent.updatedAt,
       },
     };
   } catch (error) {
