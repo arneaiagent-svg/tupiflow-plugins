@@ -95,8 +95,31 @@ export async function requestHumanTakeoverStep({
       [integrationId, threadId, summary]
     );
 
-    // Step 3 — in-thread courtesy notice (skipped in registry build, see header).
-    const notified = false;
+    // Step 3 — in-thread courtesy notice.
+    let notified = false;
+    const threadJson = ctx.threadJson;
+    if (integrationId) {
+      try {
+        if (threadJson == null) {
+          throw new Error("threadJson is missing, which is required to send a courtesy notice");
+        }
+        const text =
+          input.notifyMessage?.trim() ||
+          "An operator has been requested to take over this conversation. AI responses are now paused.";
+        const replyResult = await api.connections.sendReply({
+          integrationId,
+          threadJson: threadJson as NonNullable<unknown>,
+          text,
+        });
+        if (replyResult.delivered) {
+          notified = true;
+        }
+      } catch (err) {
+        api.logger.warn(
+          `Failed to send human takeover courtesy notice: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
 
     return {
       success: true,

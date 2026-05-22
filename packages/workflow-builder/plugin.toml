@@ -8,6 +8,10 @@ capabilities = [
   "secrets.read",
   "net.fetch",
   "worker.run",
+  "code.sandbox",
+  "connection.send",
+  "agent.launch",
+  "notifications.send",
 ]
 
 toolCatalogContributor = false
@@ -15,7 +19,7 @@ toolCatalogContributor = false
 [identity]
 name        = "workflow-builder"
 type        = "workflow-builder"
-version     = "1.2.0"
+version     = "1.3.0"
 publisher   = "tupiflow"
 description = "Internal tools that let an AI agent introspect this app: agents, actions, workflows, executions, connections, tools, plus core meta-actions like human-takeover."
 

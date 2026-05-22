@@ -1,11 +1,12 @@
 {
   "name": "@tupiflow-plugins/workflow-builder",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.ts"
   },
   "dependencies": {
     "@tupiflow-plugins/shared": "workspace:*"

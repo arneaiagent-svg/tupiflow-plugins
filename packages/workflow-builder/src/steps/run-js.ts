@@ -13,6 +13,7 @@ const MIN_TIMEOUT_MS = 1;
 const MAX_TIMEOUT_MS = 10_000;
 
 export async function wfRunJsStep({
+  api,
   ctx,
 }: RegistryStepInput): Promise<StepResult> {
   const input = ctx.input as WfRunJsInput;
@@ -23,7 +24,7 @@ export async function wfRunJsStep({
       error: { message: "code is required" },
     };
   }
-  const _timeoutMs =
+  const timeoutMs =
     typeof input.timeoutMs === "number"
       ? Math.min(
           MAX_TIMEOUT_MS,
@@ -31,13 +32,28 @@ export async function wfRunJsStep({
         )
       : undefined;
   try {
-    return {
-      success: false,
-      error: {
-        message:
-          "wfRunJsStep is not yet available in the registry build: the sandboxed JS executor (quickjs-emscripten) has not been ported. Tracked as a Phase B blocker.",
-      },
-    };
+    const result = await api.runSandbox(
+      code,
+      { data: input.data ?? null },
+      { timeoutMs }
+    );
+    if (result.success) {
+      return {
+        success: true,
+        data: {
+          success: true,
+          value: result.value,
+          logs: result.logs,
+        },
+      };
+    } else {
+      return {
+        success: false,
+        error: {
+          message: result.error.message,
+        },
+      };
+    }
   } catch (error) {
     return {
       success: false,

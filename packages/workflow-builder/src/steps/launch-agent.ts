@@ -23,44 +23,53 @@ import type {
   StepResult,
 } from "@tupiflow-plugins/shared/host-api-types";
 
-type Multimodal = string | string[] | undefined;
-
 export type WfLaunchAgentInput = {
-  agentSlug?: string;
-  userPrompt: string;
-  systemPromptOverride?: string;
+  agentSlug: string;
+  prompt?: string;
+  userPrompt?: string;
   providerOverride?: string;
   modelOverride?: string;
-  imageUrls?: Multimodal;
-  fileUrls?: Multimodal;
-  audioUrls?: Multimodal;
-  videoUrls?: Multimodal;
+  maxToolSteps?: number;
+  connectionIntegrationId?: string;
+  connectionThreadJson?: NonNullable<unknown>;
 };
 
 export async function wfLaunchAgentStep({
+  api,
   ctx,
 }: RegistryStepInput): Promise<StepResult> {
   const input = ctx.input as WfLaunchAgentInput;
   try {
-    if (!input.userPrompt?.trim()) {
+    const agentSlug = input.agentSlug?.trim();
+    const prompt = (input.prompt || input.userPrompt)?.trim();
+
+    if (!agentSlug) {
       return {
         success: false,
-        error: { message: "userPrompt is required" },
+        error: { message: "agentSlug is required and cannot be empty" },
       };
     }
-    console.warn(
-      "wfLaunchAgentStep: the host does not expose a `launchAgent` / subagent surface in PluginHostAPI yet. " +
-        "Calling api.llm.call alone would skip tool dispatch, MCP whitelist, KB retrieval, and multimodal binding — " +
-        "so this step returns an error until the host adds a dedicated subagent API. " +
-        `(workflow=${ctx.workflowId} execution=${ctx.executionId} node=${ctx.nodeId})`
-    );
+
+    if (!prompt) {
+      return {
+        success: false,
+        error: { message: "prompt is required and cannot be empty" },
+      };
+    }
+
+    const result = await api.launchAgent(agentSlug, prompt, {
+      providerOverride: input.providerOverride || undefined,
+      modelOverride: input.modelOverride || undefined,
+      maxToolSteps: typeof input.maxToolSteps === "number" ? input.maxToolSteps : undefined,
+      connectionIntegrationId: input.connectionIntegrationId || undefined,
+      connectionThreadJson: input.connectionThreadJson || undefined,
+    });
+
     return {
-      success: false,
-      error: {
-        message:
-          "wfLaunchAgentStep is not yet available in the registry build: " +
-          "PluginHostAPI does not expose a subagent-runner surface (full agent loop with tool dispatch, MCP whitelist, KB retrieval, multimodal). " +
-          "Tracked as a Phase B host-api gap; falling back to api.llm.call alone would silently drop those behaviors.",
+      success: true,
+      data: {
+        text: result.text,
+        toolStepsUsed: result.toolStepsUsed,
       },
     };
   } catch (error) {

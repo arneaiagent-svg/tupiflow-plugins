@@ -11,6 +11,7 @@ export type WfSendErrorNotificationInput = {
 };
 
 export async function wfSendErrorNotificationStep({
+  api,
   ctx,
 }: RegistryStepInput): Promise<StepResult> {
   const input = ctx.input as WfSendErrorNotificationInput;
@@ -22,12 +23,15 @@ export async function wfSendErrorNotificationStep({
         error: { message: "message is required" },
       };
     }
+    const result = await api.sendErrorNotification({
+      message,
+      workflowName: input.workflowName || undefined,
+      workflowId: input.workflowId || undefined,
+      executionId: input.executionId || undefined,
+    });
     return {
-      success: false,
-      error: {
-        message:
-          "wfSendErrorNotificationStep is not yet available in the registry build: the host-side sendManualNotification utility (workflow-error-notifier) has not been ported. Tracked as a Phase B blocker.",
-      },
+      success: true,
+      data: result,
     };
   } catch (error) {
     return {

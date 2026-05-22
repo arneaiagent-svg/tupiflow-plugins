@@ -152,7 +152,8 @@ async function dispatchProvider(
   api: RegistryStepInput["api"],
   providerId: string,
   modelType: "chat" | "embeddings",
-  apiKey: string
+  apiKey: string,
+  credentials?: Record<string, string | undefined>
 ): Promise<DispatchResult> {
   const sortAlpha = (m: ModelEntry[]): ModelEntry[] =>
     [...m].sort((a, b) => a.id.localeCompare(b.id));
@@ -248,11 +249,64 @@ async function dispatchProvider(
         );
         return { models: sortAlpha(models), source: "live" };
       }
+      case "ollama": {
+        const baseURL = credentials?.baseURL?.trim() || "http://localhost:11434";
+        const cleanBaseUrl = baseURL.replace(/\/+$/, "");
+        const res = await api.fetch(`${cleanBaseUrl}/api/tags`);
+        if (!res.ok) {
+          throw new Error(`${res.status} ${res.statusText}`);
+        }
+        const body = (await res.json()) as {
+          models?: Array<{
+            model?: string;
+            name: string;
+            details?: { family?: string; families?: string[] };
+          }>;
+        };
+
+        const OLLAMA_LATEST_TAG_RE = /:latest$/;
+        const OLLAMA_EMBEDDING_NAME_RE = /embed|bge|nomic|mxbai/i;
+        const OLLAMA_EMBEDDING_FAMILIES = new Set(["bert", "nomic-bert"]);
+
+        interface OllamaModelEntry {
+          id: string;
+          label: string;
+          family?: string;
+          families?: string[];
+        }
+
+        const tags: OllamaModelEntry[] = (body.models ?? []).map((m) => {
+          const id = m.model ?? m.name;
+          return {
+            id,
+            label: id.replace(OLLAMA_LATEST_TAG_RE, ""),
+            family: m.details?.family,
+            families: m.details?.families,
+          };
+        });
+
+        const isOllamaEmbedding = (m: OllamaModelEntry): boolean => {
+          if (m.family && OLLAMA_EMBEDDING_FAMILIES.has(m.family)) {
+            return true;
+          }
+          if (m.families?.some((f) => OLLAMA_EMBEDDING_FAMILIES.has(f))) {
+            return true;
+          }
+          return OLLAMA_EMBEDDING_NAME_RE.test(m.id);
+        };
+
+        const wantsEmbeddings = modelType === "embeddings";
+        const filtered = tags
+          .filter((m) => wantsEmbeddings ? isOllamaEmbedding(m) : !isOllamaEmbedding(m))
+          .map(({ id, label }) => ({ id, label }));
+
+        return { models: sortAlpha(filtered), source: "live" };
+      }
       default:
         return {
           models: [],
           source: "fallback",
-          warning: `Provider "${providerId}" is not supported by the registry-plugin port of fetch_models. Common providers: openai, anthropic, google, groq, mistral, deepseek, xai, openrouter, ai-gateway.`,
+          warning: `Provider "${providerId}" is not supported by the registry-plugin port of fetch_models. Common providers: openai, anthropic, google, groq, mistral, deepseek, xai, openrouter, ai-gateway, ollama.`,
         };
     }
   } catch (error) {
@@ -307,21 +361,26 @@ export async function wfFetchModelsStep(
       typedInput.modelType === "embeddings" ? "embeddings" : "chat";
 
     const credentials = await api.fetchCredentials(integrationId);
-    const apiKey = pickApiKey(credentials);
-    if (!apiKey) {
-      return {
-        success: false,
-        error: {
-          message: `Integration ${integrationId} has no API key configured. Add the provider's API key in Project Integrations.`,
-        },
-      };
+    let apiKey = "";
+    if (providerId !== "ollama") {
+      const key = pickApiKey(credentials);
+      if (!key) {
+        return {
+          success: false,
+          error: {
+            message: `Integration ${integrationId} has no API key configured. Add the provider's API key in Project Integrations.`,
+          },
+        };
+      }
+      apiKey = key;
     }
 
     const dispatched = await dispatchProvider(
       api,
       providerId,
       modelType,
-      apiKey
+      apiKey,
+      credentials
     );
 
     return {
