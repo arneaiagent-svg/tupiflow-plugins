@@ -22,7 +22,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { parse as parseToml } from "toml";
 
 import type { WorkerSpec } from "./host-api-types.ts";
@@ -466,6 +466,20 @@ async function runWatchLoop(opts: BuildPluginOptions): Promise<void> {
       ? opts.watchDirs.map((d) => resolve(opts.root, d))
       : [resolve(opts.root, dirname(opts.srcEntry))];
 
+  // Loop-avoidance: a watched dir equal to or ancestor of distDir would
+  // re-fire on every build write and spin rebuilds forever.
+  const resolvedDist = resolve(opts.root, opts.distDir);
+  for (const dir of dirs) {
+    const rel = relative(dir, resolvedDist);
+    const isAncestorOrSelf =
+      rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    if (isAncestorOrSelf) {
+      throw new Error(
+        `buildPlugin: watchDirs entry "${dir}" is equal to or an ancestor of distDir "${resolvedDist}"; watching it would trigger an infinite rebuild loop.`
+      );
+    }
+  }
+
   // AbortController drives both the per-dir async iterators and the SIGINT/
   // SIGTERM cleanup path. Closing the controller terminates every watch()
   // iterator pending in the for-await loops below.
@@ -527,9 +541,12 @@ async function runWatchLoop(opts: BuildPluginOptions): Promise<void> {
         triggerRebuild();
       }
     } catch (err) {
-      // AbortError on shutdown is expected; anything else is a real failure.
+      // AbortError on shutdown is expected; anything else is a real failure
+      // that must surface loudly (EACCES/EMFILE/…) instead of silently
+      // disabling hot-reload.
       if ((err as { name?: string }).name !== "AbortError") {
         console.error(`[buildPlugin] watcher for ${dir} died:`, err);
+        throw err;
       }
     }
   });
