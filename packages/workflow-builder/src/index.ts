@@ -213,7 +213,7 @@ export function registerPlugin(api: PluginHostAPI): void {
     formFields: [],
   });
 
-  api.registerTakeoverTarget("request-human-takeover", {
+  api.registerTakeoverTarget("workflow-builder/request-human-takeover", {
     label: "Request human takeover",
     description:
       "Hand the conversation over to a human operator from a chat connection workflow.",
