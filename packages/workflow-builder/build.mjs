@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { buildPlugin } from "@tupiflow-plugins/shared/build-helpers";
 
 const root = dirname(fileURLToPath(import.meta.url));
+const watch = process.argv.includes("--watch");
 
 const AGENT_TOOL_OVERRIDE_SCHEMA = {
   type: "object",
@@ -903,6 +904,7 @@ await buildPlugin({
   srcEntry: "src/index.ts",
   distDir: resolve(root, "dist"),
   actions,
+  watch,
   // Phase 4f batch 1 — workers.
   // compute-hash: pure compute (sha256), no blessed-module imports, no requiredNpmDeps.
   // fetch-article: jsdom + @mozilla/readability + turndown externalised via

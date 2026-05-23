@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "build:watch": "node build.mjs --watch",
     "type-check": "tsc --noEmit",
     "test": "node --test --experimental-strip-types tests/*.test.ts"
   },
