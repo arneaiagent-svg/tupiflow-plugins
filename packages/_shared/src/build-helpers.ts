@@ -18,10 +18,11 @@ import {
   readFile,
   rm,
   stat,
+  watch,
   writeFile,
 } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { parse as parseToml } from "toml";
 
 import type { WorkerSpec } from "./host-api-types.ts";
@@ -152,6 +153,23 @@ export type BuildPluginOptions = {
    * (`MissingNpmDepError` on a mismatch).
    */
   requiredNpmDeps?: Record<string, string>;
+  /**
+   * When true, after the initial successful build, keep the process alive and
+   * watch source directories for changes; rebuild on change (100ms debounce
+   * coalesces editor-save bursts). Default false — single build + exit, no
+   * behavioural change for existing callers. Rebuild errors are logged to
+   * stderr without exiting. SIGINT/SIGTERM close watchers + exit cleanly.
+   */
+  watch?: boolean;
+  /**
+   * Explicit list of directories to watch (paths relative to `root` OR
+   * absolute). When omitted, the watcher uses `dirname(srcEntry)` resolved
+   * against `root` (typically `src/`). Workers with sources outside that dir
+   * should pass an explicit list so their edits trigger rebuilds too. Each
+   * dir is watched recursively (`{recursive: true}` — supported on macOS +
+   * Windows + Linux >= Node 20). Ignored when `watch` is false/undefined.
+   */
+  watchDirs?: string[];
 };
 
 const CUSTOM_SQL_PATH_RE = /^custom-sql\/[0-9]{4,}_[a-z0-9_]+\.sql$/;
@@ -192,6 +210,16 @@ type PluginToml = {
 };
 
 export async function buildPlugin(
+  opts: BuildPluginOptions
+): Promise<BuildPluginResult> {
+  const result = await runBuildOnce(opts);
+  if (opts.watch === true) {
+    await runWatchLoop(opts);
+  }
+  return result;
+}
+
+async function runBuildOnce(
   opts: BuildPluginOptions
 ): Promise<BuildPluginResult> {
   const { root, srcEntry, distDir, actions } = opts;
@@ -428,4 +456,86 @@ export async function buildPlugin(
     manifestPath,
     workerOutputs,
   };
+}
+
+async function runWatchLoop(opts: BuildPluginOptions): Promise<void> {
+  // Resolve watch dirs: explicit list wins, else dirname(srcEntry) under root.
+  // Absolute paths pass through; relative paths resolve against root.
+  const dirs =
+    opts.watchDirs && opts.watchDirs.length > 0
+      ? opts.watchDirs.map((d) => resolve(opts.root, d))
+      : [resolve(opts.root, dirname(opts.srcEntry))];
+
+  // AbortController drives both the per-dir async iterators and the SIGINT/
+  // SIGTERM cleanup path. Closing the controller terminates every watch()
+  // iterator pending in the for-await loops below.
+  const ac = new AbortController();
+  let exiting = false;
+  const shutdown = () => {
+    if (exiting) return;
+    exiting = true;
+    ac.abort();
+    process.exit(0);
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+
+  // Debounce: collapse editor-save bursts (vim/VS Code emit rename + change
+  // back-to-back) into one rebuild. 100ms is enough for atomic-rename saves
+  // without feeling laggy on single keystroke saves.
+  let debounceTimer: NodeJS.Timeout | undefined;
+  let rebuildInFlight = false;
+  let rebuildQueued = false;
+
+  const triggerRebuild = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      void runRebuild();
+    }, 100);
+  };
+
+  const runRebuild = async (): Promise<void> => {
+    // Serialize rebuilds: if one is running, queue at most one follow-up so
+    // bursts that arrive mid-rebuild don't stack indefinitely.
+    if (rebuildInFlight) {
+      rebuildQueued = true;
+      return;
+    }
+    rebuildInFlight = true;
+    try {
+      console.log("[buildPlugin] rebuild: " + Date.now());
+      await runBuildOnce(opts);
+    } catch (err) {
+      // Keep watching on error — author fixes the source, next save retries.
+      console.error("[buildPlugin] rebuild failed:", err);
+    } finally {
+      rebuildInFlight = false;
+      if (rebuildQueued) {
+        rebuildQueued = false;
+        triggerRebuild();
+      }
+    }
+  };
+
+  // Spawn one async iterator per watched dir. Each runs until ac.abort().
+  // Promise.all keeps the function awaiting forever in steady state; SIGINT
+  // shutdown() calls process.exit before any settles.
+  const watchers = dirs.map(async (dir) => {
+    try {
+      const iter = watch(dir, { recursive: true, signal: ac.signal });
+      for await (const _evt of iter) {
+        triggerRebuild();
+      }
+    } catch (err) {
+      // AbortError on shutdown is expected; anything else is a real failure.
+      if ((err as { name?: string }).name !== "AbortError") {
+        console.error(`[buildPlugin] watcher for ${dir} died:`, err);
+      }
+    }
+  });
+
+  console.log(
+    "[buildPlugin] watch mode: " + dirs.join(", ") + " (Ctrl-C to exit)"
+  );
+  await Promise.all(watchers);
 }
