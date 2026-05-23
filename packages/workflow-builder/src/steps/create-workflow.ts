@@ -286,7 +286,8 @@ export async function wfCreateWorkflowStep({
           "private",
           false,
           true,
-        ]
+        ],
+        { schema: "public" }
       );
     } catch (error) {
       return {

@@ -12,9 +12,9 @@ import type {
   StepResult,
 } from "@tupiflow-plugins/shared/host-api-types";
 
-export async function wfListAgentsStep(
-  { api }: RegistryStepInput
-): Promise<StepResult> {
+export async function wfListAgentsStep({
+  api,
+}: RegistryStepInput): Promise<StepResult> {
   try {
     const items = await api.agents.list();
     const agents = items.map((r) => ({

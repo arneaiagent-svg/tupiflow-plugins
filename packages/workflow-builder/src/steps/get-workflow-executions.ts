@@ -87,7 +87,8 @@ export async function wfGetWorkflowExecutionsStep({
        WHERE workflow_id = $1
        ORDER BY started_at DESC
        LIMIT $2`,
-      [workflowId, limit]
+      [workflowId, limit],
+      { schema: "public" }
     );
 
     if (execs.length === 0) {

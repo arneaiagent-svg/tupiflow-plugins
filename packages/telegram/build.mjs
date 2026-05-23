@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { buildPlugin } from "@tupiflow-plugins/shared/build-helpers";
 
 const root = dirname(fileURLToPath(import.meta.url));
+const watch = process.argv.includes("--watch");
 
 await buildPlugin({
   root,
@@ -106,4 +107,5 @@ await buildPlugin({
       handlerExport: "telegramWebhookHandler",
     },
   ],
+  watch,
 });

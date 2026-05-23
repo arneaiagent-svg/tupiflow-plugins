@@ -5,8 +5,14 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
+    "build:watch": "node build.mjs --watch",
     "type-check": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types tests/*.test.ts"
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "register": "node register.mjs",
+    "dev-install": "node register.mjs",
+    "deregister": "node deregister.mjs",
+    "dev-uninstall": "node deregister.mjs",
+    "dev": "node dev.mjs"
   },
   "dependencies": {
     "@tupiflow-plugins/shared": "workspace:*"

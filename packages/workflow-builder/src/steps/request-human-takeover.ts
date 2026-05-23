@@ -62,7 +62,8 @@ export async function requestHumanTakeoverStep({
       human_takeover_disabled: boolean | null;
     }>(
       "SELECT human_takeover_disabled FROM connection_settings WHERE integration_id = $1 LIMIT 1",
-      [integrationId]
+      [integrationId],
+      { schema: "public" }
     );
     if (settingsRow[0]?.human_takeover_disabled === true) {
       return {
@@ -92,7 +93,8 @@ export async function requestHumanTakeoverStep({
          needs_human_reply = TRUE,
          takeover_summary = EXCLUDED.takeover_summary,
          updated_at = NOW()`,
-      [integrationId, threadId, summary]
+      [integrationId, threadId, summary],
+      { schema: "public" }
     );
 
     // Step 3 — in-thread courtesy notice.

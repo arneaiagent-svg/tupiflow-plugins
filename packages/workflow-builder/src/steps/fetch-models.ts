@@ -337,7 +337,8 @@ export async function wfFetchModelsStep(
        FROM public.integrations
        WHERE id = $1 AND user_id = $2
        LIMIT 1`,
-      [integrationId, ctx.userId]
+      [integrationId, ctx.userId],
+      { schema: "public" }
     );
     const integration = rows[0];
     if (!integration) {
