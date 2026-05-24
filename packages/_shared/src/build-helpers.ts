@@ -321,6 +321,11 @@ async function runBuildOnce(
       );
     }
   }
+  if (toml.capabilities?.includes("connection.lifecycle") && !opts.connection) {
+    throw new Error(
+      `buildPlugin: plugin.toml capabilities includes "connection.lifecycle" but no connection{} was passed to buildPlugin (registry allOf clause requires manifest.connection when the capability is declared).`
+    );
+  }
 
   if (opts.customSql && opts.customSql.length > 0) {
     if (!toml.capabilities?.includes("db.custom_sql")) {
