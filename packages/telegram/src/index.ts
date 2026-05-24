@@ -14,6 +14,7 @@ import {
   makeStartInstance,
 } from "./connection.ts";
 import { runSendReply, type SendReplyInput } from "./send-reply.ts";
+import { testTelegram } from "./test.ts";
 import { createInstanceRegistry, makeWebhookHandler } from "./webhook.ts";
 
 const SEND_REPLY_TOOL_INPUT_SCHEMA = {
@@ -102,6 +103,10 @@ export function registerPlugin(api: PluginHostAPI): void {
         stepFunction: "telegramSendReplyStep",
       },
     ],
+  });
+
+  api.registerTestHandler(async ({ credentials }) => {
+    return testTelegram({ botToken: credentials.botToken });
   });
 
   api.registerStep("telegramSendReplyStep", async (input: unknown) => {
