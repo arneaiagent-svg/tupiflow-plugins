@@ -3,7 +3,12 @@ import type {
   PluginHostAPI,
 } from "@tupiflow-plugins/shared/host-api-types";
 
-import type { InstanceRegistry } from "./webhook.ts";
+import {
+  type InstanceRegistry,
+  type InstanceState,
+  type TelegramUpdate,
+  processTelegramUpdate,
+} from "./webhook.ts";
 
 export interface StartInstanceDeps {
   api: PluginHostAPI;
@@ -11,6 +16,8 @@ export interface StartInstanceDeps {
 }
 
 const TELEGRAM_API_ROOT = "https://api.telegram.org";
+const POLL_TIMEOUT_SECONDS = 25;
+const POLL_BACKOFF_MS = 5000;
 
 function webhookUrlFor(baseUrl: string, integrationId: string): string {
   return `${baseUrl}/plugins/telegram/webhook/${integrationId}`;
@@ -20,26 +27,125 @@ async function callTelegramApi(
   api: PluginHostAPI,
   botToken: string,
   method: string,
-  body: Record<string, unknown>
-): Promise<{ ok: boolean; description?: string }> {
-  const response = await api.fetch(
-    `${TELEGRAM_API_ROOT}/bot${botToken}/${method}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }
-  );
-  let parsed: { ok?: boolean; description?: string } = {};
+  body: Record<string, unknown>,
+  init?: { signal?: AbortSignal }
+): Promise<{ ok: boolean; description?: string; result?: unknown }> {
   try {
-    parsed = (await response.json()) as { ok?: boolean; description?: string };
-  } catch {
-    // Telegram occasionally returns non-JSON on transport-level errors; treat
-    // as failure rather than throwing.
+    const response = await api.fetch(
+      `${TELEGRAM_API_ROOT}/bot${botToken}/${method}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        ...(init?.signal ? { signal: init.signal } : {}),
+      }
+    );
+    let parsed: { ok?: boolean; description?: string; result?: unknown } = {};
+    try {
+      parsed = (await response.json()) as {
+        ok?: boolean;
+        description?: string;
+        result?: unknown;
+      };
+    } catch {
+      // Telegram occasionally returns non-JSON on transport-level errors;
+      // treat as failure rather than throwing.
+    }
+    return {
+      ok: response.ok && parsed.ok !== false,
+      description: parsed.description,
+      result: parsed.result,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      description: error instanceof Error ? error.message : String(error),
+    };
   }
+}
+
+interface PollingHandle {
+  stop(): Promise<void>;
+}
+
+function startPolling(args: {
+  api: PluginHostAPI;
+  integrationId: string;
+  botToken: string;
+  state: InstanceState;
+}): PollingHandle {
+  const { api, integrationId, botToken, state } = args;
+  const controller = new AbortController();
+  let offset = 0;
+  let stopped = false;
+
+  const loop = (async () => {
+    api.logger.info("telegram polling started", { integrationId });
+    while (!stopped) {
+      const result = await callTelegramApi(
+        api,
+        botToken,
+        "getUpdates",
+        {
+          offset,
+          timeout: POLL_TIMEOUT_SECONDS,
+          allowed_updates: ["message", "edited_message", "channel_post"],
+        },
+        { signal: controller.signal }
+      );
+      if (stopped) {
+        break;
+      }
+      if (!result.ok) {
+        api.logger.warn("telegram getUpdates failed", {
+          integrationId,
+          description: result.description,
+        });
+        // Sleep with abort awareness so shutdown returns promptly.
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, POLL_BACKOFF_MS);
+          controller.signal.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(t);
+              resolve();
+            },
+            { once: true }
+          );
+        });
+        continue;
+      }
+      const updates = Array.isArray(result.result)
+        ? (result.result as TelegramUpdate[])
+        : [];
+      for (const update of updates) {
+        if (typeof update.update_id === "number") {
+          offset = Math.max(offset, update.update_id + 1);
+        }
+        try {
+          await processTelegramUpdate({ api }, integrationId, state, update);
+        } catch (error) {
+          api.logger.warn("telegram processTelegramUpdate failed", {
+            integrationId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+    api.logger.info("telegram polling stopped", { integrationId });
+  })();
+
   return {
-    ok: response.ok && parsed.ok !== false,
-    description: parsed.description,
+    stop: async () => {
+      stopped = true;
+      controller.abort();
+      try {
+        await loop;
+      } catch {
+        // loop swallows its own errors; abort-on-pending-fetch may surface
+        // here as an AbortError. Either way we're done.
+      }
+    },
   };
 }
 
@@ -94,14 +200,20 @@ export function makeStartInstance(deps: StartInstanceDeps) {
     const botUsername =
       typeof config.botUsername === "string" ? config.botUsername : "";
 
-    registry.set(integrationId, { webhookSecret, botUsername });
+    const state: InstanceState = { webhookSecret, botUsername };
+    registry.set(integrationId, state);
 
     // Auto-register the webhook URL with telegram-api when `publicBaseUrl`
-    // is available. Without it, fall back to the legacy customer-run
-    // setWebhook flow — log a warning so the operator sees the gap.
+    // is HTTPS. Telegram rejects non-HTTPS webhook URLs, so fall back to
+    // long-poll `getUpdates` when no usable base URL is available or when
+    // setWebhook fails for any reason.
     const baseUrl = api.publicBaseUrl;
+    const baseUrlIsHttps =
+      typeof baseUrl === "string" && baseUrl.startsWith("https://");
     let webhookAutoRegistered = false;
-    if (baseUrl) {
+    let polling: PollingHandle | null = null;
+
+    if (baseUrlIsHttps) {
       const url = webhookUrlFor(baseUrl, integrationId);
       const result = await callTelegramApi(api, botToken, "setWebhook", {
         url,
@@ -111,23 +223,41 @@ export function makeStartInstance(deps: StartInstanceDeps) {
         webhookAutoRegistered = true;
         api.logger.info("telegram setWebhook ok", { integrationId, url });
       } else {
-        api.logger.warn("telegram setWebhook failed", {
-          integrationId,
-          url,
-          description: result.description,
-        });
+        api.logger.warn(
+          "telegram setWebhook failed — falling back to polling",
+          { integrationId, url, description: result.description }
+        );
       }
+    } else if (baseUrl) {
+      api.logger.warn(
+        "telegram publicBaseUrl is not HTTPS — falling back to polling",
+        { integrationId, baseUrl }
+      );
     } else {
       api.logger.warn(
-        "telegram publicBaseUrl unset — skipping setWebhook; run the customer-side setWebhook script manually",
+        "telegram publicBaseUrl unset — falling back to polling",
         { integrationId }
       );
+    }
+
+    if (!webhookAutoRegistered) {
+      // Clear any existing webhook before polling — Telegram refuses
+      // getUpdates while a webhook is configured.
+      const cleared = await callTelegramApi(api, botToken, "deleteWebhook", {});
+      if (!cleared.ok) {
+        api.logger.warn(
+          "telegram deleteWebhook before polling failed (continuing)",
+          { integrationId, description: cleared.description }
+        );
+      }
+      polling = startPolling({ api, integrationId, botToken, state });
     }
 
     api.logger.info("telegram connection started", {
       integrationId,
       hasWebhookSecret: webhookSecret.length > 0,
       webhookAutoRegistered,
+      polling: polling !== null,
     });
 
     return {
@@ -137,9 +267,13 @@ export function makeStartInstance(deps: StartInstanceDeps) {
         webhookSecret,
         botUsername,
         webhookAutoRegistered,
+        polling: polling !== null,
       },
       shutdown: async () => {
         registry.delete(integrationId);
+        if (polling) {
+          await polling.stop();
+        }
         if (webhookAutoRegistered) {
           const result = await callTelegramApi(
             api,

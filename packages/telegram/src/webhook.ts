@@ -109,7 +109,7 @@ type TelegramMessage = {
   animation?: TelegramVideo;
 };
 
-type TelegramUpdate = {
+export type TelegramUpdate = {
   update_id?: number;
   message?: TelegramMessage;
   edited_message?: TelegramMessage;
@@ -289,6 +289,79 @@ function buildThreadJsonFor(
   };
 }
 
+/**
+ * Build a ChatMessageEvent from a Telegram update and dispatch it to the
+ * host. Used by both the webhook handler and the polling fallback in
+ * connection.ts, so they emit identical events. Returns true when the
+ * update contained a routable message, false otherwise.
+ */
+export async function processTelegramUpdate(
+  deps: { api: PluginHostAPI },
+  integrationId: string,
+  state: InstanceState,
+  update: TelegramUpdate
+): Promise<boolean> {
+  const { api } = deps;
+  const message =
+    update.message ?? update.edited_message ?? update.channel_post;
+  if (!(message && message.chat && message.chat.id !== undefined)) {
+    return false;
+  }
+
+  // Bot token is required to resolve file URLs. Fetch at dispatch time so
+  // a token rotation takes effect on the next update without restarting
+  // the connection. Verbatim manifest key per Phase 4a.2 Q6 Convention X.
+  const creds = await api.fetchCredentials(integrationId);
+  const botToken = creds.TELEGRAM_BOT_API_KEY ?? "";
+
+  const chatType = message.chat.type ?? "";
+  const isDM = chatType === "private";
+  const isMention = detectMention(message, state.botUsername);
+  const { id: threadId, channelId, threadJson } = buildThreadJsonFor(
+    message.chat.id,
+    isDM,
+    message.message_thread_id
+  );
+
+  const attachments = botToken
+    ? await buildAttachmentArrays(api, botToken, message)
+    : {
+        imageUrls: [],
+        fileUrls: [],
+        audioUrls: [],
+        videoUrls: [],
+      };
+
+  const event: ChatMessageEvent = {
+    integrationId,
+    text: deriveText(message),
+    threadJson,
+    isDM,
+    isMention,
+    channelId,
+    threadId,
+    ...(message.from && typeof message.from.id === "number"
+      ? { chatId: String(message.from.id) }
+      : {}),
+    userName: deriveUserName(message.from),
+    arrivalAt: Date.now(),
+    imageUrls: attachments.imageUrls,
+    fileUrls: attachments.fileUrls,
+    audioUrls: attachments.audioUrls,
+    videoUrls: attachments.videoUrls,
+  };
+
+  try {
+    await api.dispatchToWorkflow(event);
+  } catch (error) {
+    api.logger.warn("telegram dispatchToWorkflow failed", {
+      integrationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return true;
+}
+
 export interface WebhookHandlerDeps {
   api: PluginHostAPI;
   registry: InstanceRegistry;
@@ -330,64 +403,7 @@ export function makeWebhookHandler(deps: WebhookHandlerDeps): RouteHandler {
       return ctx.json({ ok: true });
     }
 
-    const message =
-      update.message ?? update.edited_message ?? update.channel_post;
-    if (!(message && message.chat && message.chat.id !== undefined)) {
-      return ctx.json({ ok: true });
-    }
-
-    // Bot token is required to resolve file URLs. Plugin fetches creds at
-    // dispatch time so a token rotation takes effect on the next webhook
-    // without restarting the connection. Verbatim manifest key per Phase
-    // 4a.2 Q6 Convention X.
-    const creds = await api.fetchCredentials(integrationId);
-    const botToken = creds.TELEGRAM_BOT_API_KEY ?? "";
-
-    const chatType = message.chat.type ?? "";
-    const isDM = chatType === "private";
-    const isMention = detectMention(message, state.botUsername);
-    const { id: threadId, channelId, threadJson } = buildThreadJsonFor(
-      message.chat.id,
-      isDM,
-      message.message_thread_id
-    );
-
-    const attachments = botToken
-      ? await buildAttachmentArrays(api, botToken, message)
-      : {
-          imageUrls: [],
-          fileUrls: [],
-          audioUrls: [],
-          videoUrls: [],
-        };
-
-    const event: ChatMessageEvent = {
-      integrationId,
-      text: deriveText(message),
-      threadJson,
-      isDM,
-      isMention,
-      channelId,
-      threadId,
-      ...(message.from && typeof message.from.id === "number"
-        ? { chatId: String(message.from.id) }
-        : {}),
-      userName: deriveUserName(message.from),
-      arrivalAt: Date.now(),
-      imageUrls: attachments.imageUrls,
-      fileUrls: attachments.fileUrls,
-      audioUrls: attachments.audioUrls,
-      videoUrls: attachments.videoUrls,
-    };
-
-    try {
-      await api.dispatchToWorkflow(event);
-    } catch (error) {
-      api.logger.warn("telegram dispatchToWorkflow failed", {
-        integrationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    await processTelegramUpdate({ api }, integrationId, state, update);
     // Always 200 — duplicate / no-target cases return null from
     // dispatchToWorkflow, but Telegram must never be told to retry.
     return ctx.json({ ok: true });
