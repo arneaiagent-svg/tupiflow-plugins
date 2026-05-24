@@ -183,5 +183,18 @@ export type Manifest = {
    * sharp, mammoth). See PHASE_4F_PLUGIN_DEPS_AND_WORKERS.md batch 2.
    */
   requiredNpmDeps?: Record<string, string>;
+  /**
+   * Hint to the host install pipeline: when true, the host skips
+   * activation after pnpm-add of requiredNpmDeps, marks the install row
+   * pending_restart, and self-exits so the container restart policy
+   * brings the process back. The boot reconciler activates
+   * pending_restart rows.
+   *
+   * Set true when any requiredNpmDeps entry is consumed by host wiring
+   * code (not lazy-imported by bundle.mjs) or is a native module with
+   * .node bindings. Default false preserves the today-behavior of
+   * immediate in-process activation.
+   */
+  requiresHostRestart?: boolean;
   bundle: ManifestBundle;
 };

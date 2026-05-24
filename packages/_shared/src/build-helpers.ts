@@ -154,6 +154,12 @@ export type BuildPluginOptions = {
    */
   requiredNpmDeps?: Record<string, string>;
   /**
+   * Forwarded verbatim to manifest.requiresHostRestart. See
+   * `manifest-types.ts` for semantics. Default false (omitted from
+   * emitted manifest).
+   */
+  requiresHostRestart?: boolean;
+  /**
    * When true, after the initial successful build, keep the process alive and
    * watch source directories for changes; rebuild on change (100ms debounce
    * coalesces editor-save bursts). Default false — single build + exit, no
@@ -419,6 +425,7 @@ async function runBuildOnce(
     ...(opts.requiredNpmDeps && Object.keys(opts.requiredNpmDeps).length > 0
       ? { requiredNpmDeps: opts.requiredNpmDeps }
       : {}),
+    ...(opts.requiresHostRestart ? { requiresHostRestart: true } : {}),
     ...(toml.takeoverTargets && toml.takeoverTargets.length > 0
       ? { takeoverTargets: toml.takeoverTargets }
       : {}),
