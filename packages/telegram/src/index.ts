@@ -106,7 +106,7 @@ export function registerPlugin(api: PluginHostAPI): void {
   });
 
   api.registerTestHandler(async ({ credentials }) => {
-    return testTelegram({ botToken: credentials.botToken });
+    return testTelegram({ TELEGRAM_BOT_API_KEY: credentials.TELEGRAM_BOT_API_KEY });
   });
 
   api.registerStep("telegramSendReplyStep", async (input: unknown) => {

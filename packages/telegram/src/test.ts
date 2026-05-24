@@ -4,9 +4,9 @@
 import type { TestIntegrationResult } from "@tupiflow-plugins/shared/host-api-types";
 
 export async function testTelegram(credentials: {
-  botToken?: string;
+  TELEGRAM_BOT_API_KEY?: string;
 }): Promise<TestIntegrationResult> {
-  const { botToken } = credentials;
+  const botToken = credentials.TELEGRAM_BOT_API_KEY;
 
   if (!botToken) {
     return { success: false, error: "botToken is required" };
