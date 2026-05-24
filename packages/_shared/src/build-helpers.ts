@@ -243,6 +243,46 @@ export async function buildPlugin(
   return result;
 }
 
+/**
+ * Convention X — every `formField.envVar` MUST be declared in
+ * `manifest.credentials[].key`.
+ *
+ * Plugin authors frequently declare a formField with an `envVar` ("X") but
+ * forget to also declare `{ key: "X" }` in the credentials block. Without
+ * this check the manifest ships with a credential the runtime emits but
+ * never declares: manifest viewers, audit tools, and the host's
+ * runtimeRegistry.manifestCredentialKeys list show INCOMPLETE data. Two
+ * host-side bugs (helpers.ts `runtimeCredsFromConfig`, credential-fetcher.ts
+ * `mapIntegrationConfig`) shipped in tupiflow because the saved-row path
+ * read the configKey instead of the envVar; once those landed, plugins that
+ * skip the credentials declaration "work" silently, which is worse — the
+ * contract breaks without surfacing. Enforcing the declaration at build
+ * time keeps the manifest honest.
+ *
+ * Reverse direction (manifest credentials without a formField) stays valid:
+ * those are server-only creds (e.g. refresh tokens injected by the host),
+ * so this helper does NOT check that direction.
+ *
+ * Exported so unit tests can exercise the predicate without spinning up a
+ * full buildPlugin() invocation (which mkdirs, esbuilds, and tars).
+ */
+export function assertFormFieldEnvVarsDeclared(
+  formFields: ManifestFormField[] | undefined,
+  credentials: ManifestCredential[] | undefined
+): void {
+  if (!formFields || formFields.length === 0) return;
+  const credentialKeys = new Set((credentials ?? []).map((c) => c.key));
+  for (const ff of formFields) {
+    if (typeof ff.envVar === "string" && ff.envVar.length > 0) {
+      if (!credentialKeys.has(ff.envVar)) {
+        throw new Error(
+          `buildPlugin: formField "${ff.id}" declares envVar "${ff.envVar}" but no manifest credential declares that key. Add { key: "${ff.envVar}", label: "...", type: "..." } to the manifest's credentials list, or remove the envVar from the formField if no credential is meant.`
+        );
+      }
+    }
+  }
+}
+
 async function runBuildOnce(
   opts: BuildPluginOptions
 ): Promise<BuildPluginResult> {
@@ -326,6 +366,10 @@ async function runBuildOnce(
       `buildPlugin: plugin.toml capabilities includes "connection.lifecycle" but no connection{} was passed to buildPlugin (registry allOf clause requires manifest.connection when the capability is declared).`
     );
   }
+
+  // Convention X — formField.envVar MUST appear in manifest.credentials[].key.
+  // See assertFormFieldEnvVarsDeclared() below for full rationale.
+  assertFormFieldEnvVarsDeclared(opts.formFields, opts.credentials);
 
   if (opts.customSql && opts.customSql.length > 0) {
     if (!toml.capabilities?.includes("db.custom_sql")) {
