@@ -1017,20 +1017,47 @@ export type PluginHostAPI = {
   /**
    * Register a step handler.
    *
-   * When `id` matches the connection's `replyActionId` pattern (default
-   * `${integrationType}/send-reply`), the step's input handler MUST accept
-   * `{ text, integrationId, threadJson }` because the auto-generated
-   * default workflow binds those exact field names on the send-reply node
-   * (see PHASE_4A2_LIFECYCLE.md §3.1). Wrong argument names will pass type
-   * checks, the workflow will run green, and the reply will silently no-op.
+   * Two-name model: a step has both a bare `stepFunction` name (legacy
+   * JS identifier from when first-party plugins ran in-process) and a
+   * namespaced `<integrationType>/<action.slug>` ID (added Phase 4e for
+   * cross-plugin uniqueness in the workflow engine).
+   *
+   * Pass the EXACT bare string declared in manifest `actions[].stepFunction`
+   * as `id`. The host matches it against the manifest action, then stores
+   * the handler internally under `<integrationType>/<action.slug>`. Do NOT
+   * pass the namespaced form here — it will throw with
+   * `no manifest action declares stepFunction "<id>"`.
+   *
+   * Workflow dispatcher looks up by the namespaced form via `getStep()`,
+   * which finds the handler registered through this method. Connection
+   * plugins setting `replyActionId` on `registerConnection({...})` MUST
+   * use the namespaced form there; for `registerStep` use the bare
+   * stepFunction name.
+   *
+   * See `tupiflow/docs/PLUGIN_DEV.md` "Step ID model" for the why.
    */
   registerStep(id: string, fn: StepHandler): void;
   /**
-   * Register a step handler that needs the registry-installable `{api, ctx}`
-   * envelope (Phase 4e.2 §2.7). The host routes dispatch via the registry
-   * the id lands in — explicit second method, NOT arity detection on
-   * `registerStep` (arrow-destructure ambiguity makes `fn.length`
-   * unreliable). No new capability — type-only contract.
+   * Register a step handler.
+   *
+   * Two-name model: a step has both a bare `stepFunction` name (legacy
+   * JS identifier from when first-party plugins ran in-process) and a
+   * namespaced `<integrationType>/<action.slug>` ID (added Phase 4e for
+   * cross-plugin uniqueness in the workflow engine).
+   *
+   * Pass the EXACT bare string declared in manifest `actions[].stepFunction`
+   * as `id`. The host matches it against the manifest action, then stores
+   * the handler internally under `<integrationType>/<action.slug>`. Do NOT
+   * pass the namespaced form here — it will throw with
+   * `no manifest action declares stepFunction "<id>"`.
+   *
+   * Workflow dispatcher looks up by the namespaced form via `getStep()`,
+   * which finds the handler registered through this method. Connection
+   * plugins setting `replyActionId` on `registerConnection({...})` MUST
+   * use the namespaced form there; for `registerStep` use the bare
+   * stepFunction name.
+   *
+   * See `tupiflow/docs/PLUGIN_DEV.md` "Step ID model" for the why.
    */
   registerRegistryStep(id: string, fn: RegistryStepHandler): void;
   // `schema` is typed `unknown` here because the shim is dependency-free.

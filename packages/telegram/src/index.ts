@@ -108,17 +108,6 @@ export function registerPlugin(api: PluginHostAPI): void {
     return runSendReply(input as SendReplyInput);
   });
 
-  // Default `replyActionId` (`telegram/send-reply`) matches the convention
-  // `connection-dispatch-graph.ts` falls back to, so we also register the
-  // step under that exact id for the auto-generated default workflow.
-  api.registerStep("telegram/send-reply", async (input: unknown) => {
-    // The default workflow binds { text, integrationId, threadJson } — the
-    // shape `runSendReply` already accepts. The botToken slot is left blank;
-    // a future revision will let send-reply call fetchCredentials internally
-    // (mirrors first-party connection.ts:245 path).
-    return runSendReply(input as SendReplyInput);
-  });
-
   api.registerTool(
     "telegram_send_reply",
     SEND_REPLY_TOOL_INPUT_SCHEMA,
@@ -140,9 +129,10 @@ export function registerPlugin(api: PluginHostAPI): void {
   api.registerConnection({
     startInstance: makeStartInstance({ api, registry }),
     buildThreadJson: buildTelegramThreadJson,
-    // omit replyActionId — `${integrationType}/send-reply` is the default and
-    // matches what the first-party plugin already registers
-    // (`tupiflow/plugins/telegram/connection.ts:582`).
+    // Explicit: matches the synthesized default in connection-dispatch-graph.ts:82.
+    // Host would derive the same value when omitted, but stating it here is
+    // self-documenting and prevents future refactor from silently changing the default.
+    replyActionId: "telegram/send-reply",
   });
 
   api.registerRoute(
