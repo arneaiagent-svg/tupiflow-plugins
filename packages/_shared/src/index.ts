@@ -5,7 +5,8 @@
 // only use this entrypoint when they really need a single import line.
 
 export {
-  ALLOWED_NPM_DEPS,
+  assertFormFieldEnvVarsDeclared,
+  assertNpmPackageNameValid,
   BLESSED_HOST_MODULES,
   buildPlugin,
 } from "./build-helpers.ts";

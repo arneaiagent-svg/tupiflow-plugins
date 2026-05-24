@@ -924,11 +924,13 @@ await buildPlugin({
       timeoutMs: 90_000,
     },
   ],
-  // Phase 4f batch 2 — externalise heavy parsing deps. Names must be on the
-  // shim's ALLOWED_NPM_DEPS list AND on the registry's Go mirror; host
-  // installer verifies presence + range at install time. Ranges mirror the
-  // versions declared in the tupiflow host package.json — bumping these is
-  // a coordinated change with the host's dependency manifest.
+  // Phase 4f batch 2 — externalise heavy parsing deps. Names are validated
+  // for npm package-name format by the shim (`assertNpmPackageNameValid`);
+  // trust that any given name is appropriate sits with the registry
+  // publisher-trust gate. Host installer verifies presence + range at
+  // install time. Ranges mirror the versions declared in the tupiflow host
+  // package.json — bumping these is a coordinated change with the host's
+  // dependency manifest.
   requiredNpmDeps: {
     jsdom: "^29.1.1",
     "@mozilla/readability": "^0.6.0",

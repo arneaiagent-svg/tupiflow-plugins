@@ -641,11 +641,17 @@ export class MissingNpmDepError extends Error {
 }
 
 /**
- * §4f batch 2 — Thrown by the shim build helper (and by the registry Go
- * validator at publish) when a plugin declares a `requiredNpmDeps` entry
- * whose key is not on the closed allowlist (`ALLOWED_NPM_DEPS` shim-side,
- * mirrored registry-side). Adding a new allowlist entry requires a PR to
- * both surfaces.
+ * §4f batch 2 — Historical: thrown by the shim build helper and the registry
+ * Go validator when a plugin declared a `requiredNpmDeps` entry not on the
+ * closed `ALLOWED_NPM_DEPS` shim-side / Go-side mirrored allowlist.
+ *
+ * As of `_shared` 0.15.0 the trust gate moved to the registry publisher
+ * layer (admin token) — neither the shim nor the registry rejects on a
+ * package-name allowlist any more. The class is retained as a stable export
+ * for downstream consumers that still pattern-match on it, but it is no
+ * longer thrown by any first-party code path here. The shim instead
+ * enforces npm's package-name FORMAT via `assertNpmPackageNameValid` in
+ * `build-helpers.ts`.
  */
 export class NpmDepNotAllowedError extends Error {
   constructor(public readonly depName: string) {

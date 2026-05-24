@@ -51,8 +51,9 @@ import type {
  * `_shared` bump. Adding a new entry is non-breaking.
  *
  * NOT included: heavy parsing libs (jsdom, @mozilla/readability, turndown,
- * pdf-parse, sharp, mammoth). Those land in Phase 4f batch 2 via the
- * `requiredNpmDeps` allowlist.
+ * pdf-parse, sharp, mammoth) and chat-adapter packages. Plugins that need
+ * them declare them via `manifest.requiredNpmDeps`; the host installer
+ * verifies presence + semver range at install time.
  */
 export const BLESSED_HOST_MODULES = {
   zod: "^4.1.12",
@@ -69,30 +70,54 @@ export const BLESSED_HOST_MODULES = {
 } as const;
 
 /**
- * §4f batch 2 — Closed allowlist of npm package names a plugin may declare in
- * `manifest.requiredNpmDeps`. Mirrors the registry-side Go allowlist byte-for-
- * byte; drift between the two is caught by
- * `tupiflow-registry/scripts/check-npm-allowlist.sh`.
+ * §4f batch 2 — npm package-name format check for `manifest.requiredNpmDeps`.
  *
- * Distinct from `BLESSED_HOST_MODULES`: blessed modules are always available
- * to every plugin (no opt-in). `ALLOWED_NPM_DEPS` are opt-in heavy parsing
- * libs the host commits to providing when a plugin explicitly declares them
- * — the host installer verifies presence + semver range at install time, so
- * unused entries impose zero install-time cost on hosts.
+ * Historical context: an earlier iteration of this shim enforced a closed
+ * `ALLOWED_NPM_DEPS` allowlist mirrored byte-for-byte with a registry-side Go
+ * allowlist. That constant has been REMOVED — the trust gate for npm deps
+ * now lives entirely at the registry admin layer (only trusted publishers
+ * hold a publish token; the registry rejects publish from anyone else). The
+ * shim no longer enforces a closed list of package names.
  *
- * Adding a new entry requires a PR to BOTH this constant AND the registry Go
- * mirror, with a justification for why the dep can't be bundled. Native-
- * binding-heavy libs (canvas, unpdf, …) stay OUT — those route through the
- * sidecar mechanism (`PLUGIN_TIERS.md` §3 Amendment 2).
+ * What remains here is purely anti-injection: validate that each declared
+ * dep name matches npm's official package-name shape so we never hand a
+ * shell-injectable or path-traversing string to esbuild's `external` list or
+ * to the host installer. The regex below mirrors npm's documented rules
+ * (https://docs.npmjs.com/cli/v10/configuring-npm/package-json#name):
+ *
+ *   - optional `@scope/` prefix
+ *   - lowercase letters, digits, `.`, `_`, `-`
+ *   - MUST NOT start with `.` or `_` (enforced by leading `[a-z0-9]`)
+ *   - MUST be 1..214 chars total (including any scope prefix)
+ *
+ * This is intentionally stricter than the spec (URL-safe-by-construction)
+ * and orthogonal to publisher-trust: a malformed name fails the build before
+ * any tarball is produced, regardless of who is publishing.
+ *
+ * Exported so unit tests can exercise the predicate without spinning up a
+ * full buildPlugin() invocation.
  */
-export const ALLOWED_NPM_DEPS = [
-  "jsdom",
-  "@mozilla/readability",
-  "turndown",
-  "pdf-parse",
-  "sharp",
-  "mammoth",
-] as const;
+const NPM_PACKAGE_NAME_RE =
+  /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+const NPM_PACKAGE_NAME_MAX_LEN = 214;
+
+export function assertNpmPackageNameValid(name: string): void {
+  if (typeof name !== "string" || name.length === 0) {
+    throw new Error(
+      `buildPlugin: requiredNpmDeps key must be a non-empty string (got ${typeof name}).`
+    );
+  }
+  if (name.length > NPM_PACKAGE_NAME_MAX_LEN) {
+    throw new Error(
+      `buildPlugin: requiredNpmDeps entry "${name}" exceeds npm package-name limit of ${NPM_PACKAGE_NAME_MAX_LEN} chars.`
+    );
+  }
+  if (!NPM_PACKAGE_NAME_RE.test(name)) {
+    throw new Error(
+      `buildPlugin: requiredNpmDeps entry "${name}" is not a valid npm package name. Allowed shape: optional @scope/, lowercase, [a-z0-9._-], no leading . or _. See https://docs.npmjs.com/cli/v10/configuring-npm/package-json#name`
+    );
+  }
+}
 
 const WORKER_ENTRY_RE = /^workers\/[a-zA-Z0-9_-]+\.mjs$/;
 
@@ -161,14 +186,16 @@ export type BuildPluginOptions = {
   workers?: WorkerSpec[];
   /**
    * §4f batch 2 — External npm deps the plugin imports but does NOT bundle.
-   * Each declared name is validated against `ALLOWED_NPM_DEPS` at build time
-   * (off-allowlist names throw before publish) and added to the esbuild
+   * Each declared name is validated against npm's package-name format
+   * (`assertNpmPackageNameValid`) at build time and added to the esbuild
    * `external` list for BOTH the main bundle and every worker bundle
    * (alongside `BLESSED_HOST_MODULES`). Values are npm semver ranges
    * (`^22.0.0`, `~0.5.0`, …); the registry Go validator re-parses them at
    * publish. Recorded verbatim on `manifest.requiredNpmDeps`. The host
    * installer enforces presence + range at install time
-   * (`MissingNpmDepError` on a mismatch).
+   * (`MissingNpmDepError` on a mismatch). Trust that a given package name
+   * is appropriate sits with the registry admin (publisher-trust gate), not
+   * with this shim.
    */
   requiredNpmDeps?: Record<string, string>;
   /**
@@ -295,17 +322,14 @@ async function runBuildOnce(
 
   // §4f batch 2 — validate + externalize plugin-declared npm deps. Validation
   // runs BEFORE rm/mkdir so a bad name fails the build without touching
-  // distDir. Off-allowlist names fail loudly here so the publish-time
-  // registry rejection never fires in practice.
+  // distDir. The shim no longer enforces a closed package-name allowlist —
+  // that gate moved to the registry admin/publisher-trust layer. What we do
+  // still enforce is npm's package-name FORMAT (anti-injection / anti-path-
+  // traversal); see `assertNpmPackageNameValid` above for rationale.
   const npmDepExternals: string[] = [];
   if (opts.requiredNpmDeps) {
-    const allowed = new Set<string>(ALLOWED_NPM_DEPS);
     for (const [name, range] of Object.entries(opts.requiredNpmDeps)) {
-      if (!allowed.has(name)) {
-        throw new Error(
-          `buildPlugin: requiredNpmDeps entry "${name}" is not on the registry allowlist (ALLOWED_NPM_DEPS). Update both shim + registry Go allowlist to add it.`
-        );
-      }
+      assertNpmPackageNameValid(name);
       if (typeof range !== "string" || range.length === 0) {
         throw new Error(
           `buildPlugin: requiredNpmDeps["${name}"] must be a non-empty semver range string (got ${typeof range}).`

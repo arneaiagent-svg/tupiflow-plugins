@@ -216,18 +216,19 @@ export type Manifest = {
    * against the declared range. A missing or out-of-range module fails the
    * install with `MissingNpmDepError` BEFORE any plugin schema is created.
    *
-   * Closed allowlist: package names are restricted to the registry-curated
-   * allowlist (mirrored shim-side as `ALLOWED_NPM_DEPS` in `build-helpers.ts`).
-   * Declaring an off-allowlist name throws `NpmDepNotAllowedError` at build
-   * time and is rejected at publish time by the registry Go validator.
-   * Adding a name to the allowlist requires a PR to BOTH the registry Go
-   * allowlist and the shim constant (drift caught by
-   * `scripts/check-npm-allowlist.sh`).
+   * Trust model: the shim no longer enforces a closed package-name allowlist.
+   * The gate moved to the registry admin layer (only trusted publishers hold
+   * a publish token; arbitrary callers cannot push manifests). The shim still
+   * enforces npm's package-name FORMAT at build time
+   * (`assertNpmPackageNameValid` — anti-injection / anti-path-traversal),
+   * and the host installer still verifies presence + range on customer
+   * boxes. Adding a heavy dep no longer requires a coordinated PR.
    *
    * Complements `BLESSED_HOST_MODULES`: blessed = always available + no
    * opt-in needed (zod, hono, drizzle-orm, …); `requiredNpmDeps` = opt-in
-   * heavy parsing libs (jsdom, @mozilla/readability, turndown, pdf-parse,
-   * sharp, mammoth). See PHASE_4F_PLUGIN_DEPS_AND_WORKERS.md batch 2.
+   * extras the host pnpm-adds at install time (jsdom, @mozilla/readability,
+   * turndown, pdf-parse, sharp, mammoth, chat-adapter packages, …).
+   * See PHASE_4F_PLUGIN_DEPS_AND_WORKERS.md batch 2.
    */
   requiredNpmDeps?: Record<string, string>;
   /**
