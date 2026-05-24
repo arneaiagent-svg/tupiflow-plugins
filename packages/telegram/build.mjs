@@ -184,17 +184,10 @@ await buildPlugin({
       handlerExport: "telegramWebhookHandler",
     },
   ],
-  // Host-wired npm dep — `@chat-adapter/telegram` is loaded from the
-  // tupiflow host's node_modules (bind-mounted) rather than bundled. The
-  // host installer runs `pnpm add` for these entries before activating.
-  // Version pin mirrors the host's own dependency in `tupiflow/package.json`.
-  requiredNpmDeps: {
-    "@chat-adapter/telegram": "^4.26.0",
-  },
-  // Signals that activation requires a host process restart so freshly
-  // installed `requiredNpmDeps` can be loaded. See
-  // HANDOFF_PLUGIN_RESTART_FLAG.md in the tupiflow repo for the host-side
-  // contract.
-  requiresHostRestart: true,
+  // requiredNpmDeps and requiresHostRestart intentionally omitted in 0.4.4.
+  // The plugin code uses raw fetch against api.telegram.org and never
+  // imports @chat-adapter/telegram. Declaring it caused an unnecessary
+  // pnpm add + 5s drain restart on install. Both fields will return in
+  // 0.4.5 when the SDK port lands.
   watch,
 });
