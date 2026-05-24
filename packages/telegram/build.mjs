@@ -11,10 +11,87 @@ import { buildPlugin } from "@tupiflow-plugins/shared/build-helpers";
 const root = dirname(fileURLToPath(import.meta.url));
 const watch = process.argv.includes("--watch");
 
+// Admin-UI form fields rendered when the operator configures a Telegram
+// connection instance. Shape matches the legacy first-party plugin
+// (plugins_bu/telegram/index.ts) so the host can hydrate
+// IntegrationPlugin.formFields straight off manifest.json (Phase C).
+const TELEGRAM_FORM_FIELDS = [
+  {
+    id: "botToken",
+    label: "Bot Token",
+    type: "password",
+    configKey: "botToken",
+    envVar: "TELEGRAM_BOT_API_KEY",
+    placeholder: "123456:ABC-...",
+    helpText: "Create a bot and get its token from ",
+    helpLink: { text: "@BotFather", url: "https://t.me/BotFather" },
+    required: true,
+  },
+  {
+    id: "botUsername",
+    label: "Bot Username (optional)",
+    type: "text",
+    configKey: "botUsername",
+    placeholder: "my_bot",
+    helpText: "The bot's @username without the leading @",
+  },
+  {
+    id: "webhookSecret",
+    label: "Webhook Secret (optional)",
+    type: "password",
+    configKey: "webhookSecret",
+    placeholder: "Random secret for webhook validation",
+    helpText: "Used if you configure a production webhook instead of polling",
+  },
+];
+
+// Connection metadata mirrored from the legacy first-party plugin. The full
+// triggerInputFields list (text/integrationId/threadId/channelId/userName/
+// isDM/isMention/threadJson/imageUrls/fileUrls/audioUrls/videoUrls) is copied
+// verbatim from plugins_bu/telegram/index.ts so admin UI dynamic-option
+// dropdowns surface every field the runtime emits.
+const TELEGRAM_CONNECTION = {
+  triggerType: "Chat Message",
+  triggerLabel: "Telegram Message",
+  triggerIcon: "MessageCircle",
+  supportsAttachments: true,
+  triggerInputFields: [
+    { field: "text", description: "Text of the incoming message" },
+    { field: "integrationId", description: "Telegram integration ID" },
+    { field: "threadId", description: "Telegram thread ID" },
+    { field: "channelId", description: "Telegram channel ID" },
+    { field: "userName", description: "Sender's display name" },
+    { field: "isDM", description: "True if the message is a DM" },
+    { field: "isMention", description: "True if the bot was @-mentioned" },
+    { field: "threadJson", description: "Serialized thread for replies" },
+    {
+      field: "imageUrls",
+      description: "Image attachments from the message (data URLs)",
+    },
+    {
+      field: "fileUrls",
+      description:
+        "Document/file attachments from the message (data URLs, excludes images/audio/video)",
+    },
+    {
+      field: "audioUrls",
+      description:
+        "Audio attachments from the message (voice notes, audio files; data URLs)",
+    },
+    {
+      field: "videoUrls",
+      description:
+        "Video attachments from the message (mp4, webm, mov; data URLs). Requires a model that supports video input (e.g. Gemini).",
+    },
+  ],
+};
+
 await buildPlugin({
   root,
   srcEntry: "src/index.ts",
   distDir: resolve(root, "dist"),
+  formFields: TELEGRAM_FORM_FIELDS,
+  connection: TELEGRAM_CONNECTION,
   credentials: [
     {
       key: "TELEGRAM_BOT_API_KEY",

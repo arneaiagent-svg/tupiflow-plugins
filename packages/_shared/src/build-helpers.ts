@@ -29,7 +29,9 @@ import type { WorkerSpec } from "./host-api-types.ts";
 import type {
   Manifest,
   ManifestAction,
+  ManifestConnection,
   ManifestCredential,
+  ManifestFormField,
   ManifestRequiredExtension,
   ManifestRoute,
   ManifestSchemaBlock,
@@ -101,6 +103,22 @@ export type BuildPluginOptions = {
   actions: ManifestAction[];
   routes?: ManifestRoute[];
   credentials?: ManifestCredential[];
+  /**
+   * Admin-UI form fields rendered when the operator configures a connection
+   * instance. Emitted verbatim onto `manifest.formFields` (Phase B). The host
+   * hydrates `IntegrationPlugin.formFields` from this block so the UI
+   * renders without bespoke per-plugin code. Optional — omit (or pass `[]`)
+   * for plugins that don't expose a connection-configuration form.
+   */
+  formFields?: ManifestFormField[];
+  /**
+   * Connection metadata (trigger type/label/icon, supportsAttachments,
+   * triggerInputFields). Emitted verbatim onto `manifest.connection`. Required
+   * by the registry allOf clause when `plugin.toml` capabilities include
+   * `connection.lifecycle` — `buildPlugin` enforces this at build time so the
+   * mistake surfaces before publish.
+   */
+  connection?: ManifestConnection;
   schema?: ManifestSchemaBlock;
   /**
    * SQL migration files to include in the tarball. Paths relative to `root`.
@@ -296,6 +314,14 @@ async function runBuildOnce(
     }
   }
 
+  if (opts.connection) {
+    if (!toml.capabilities?.includes("connection.lifecycle")) {
+      throw new Error(
+        `buildPlugin: connection{} is set but plugin.toml capabilities does not include "connection.lifecycle" (registry allOf clause will reject).`
+      );
+    }
+  }
+
   if (opts.customSql && opts.customSql.length > 0) {
     if (!toml.capabilities?.includes("db.custom_sql")) {
       throw new Error(
@@ -413,6 +439,10 @@ async function runBuildOnce(
     ...(opts.schema ? { schema: opts.schema } : {}),
     capabilities: toml.capabilities ?? [],
     ...(opts.credentials ? { credentials: opts.credentials } : {}),
+    ...(opts.formFields && opts.formFields.length > 0
+      ? { formFields: opts.formFields }
+      : {}),
+    ...(opts.connection ? { connection: opts.connection } : {}),
     actions,
     ...(opts.routes ? { routes: opts.routes } : {}),
     ...(opts.requiredExtensions && opts.requiredExtensions.length > 0

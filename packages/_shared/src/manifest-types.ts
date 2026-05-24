@@ -36,6 +36,51 @@ export type ManifestCredential = {
   helpText?: string;
 };
 
+/**
+ * Admin-UI form field rendered when the operator configures a connection
+ * instance (Phase B of the manifest-driven connection UX). Mirrors the
+ * registry `formField` $def exactly — every regex constraint is enforced by
+ * the registry Go validator at publish time. The host reads these out of
+ * `manifest.json` and serialises them onto `IntegrationPlugin.formFields` so
+ * the admin UI hydrates without bespoke per-plugin code.
+ *
+ * - `id` and `configKey` MUST match `/^[a-zA-Z][a-zA-Z0-9_]*$/`.
+ * - `envVar` (when present) MUST match `/^[A-Z][A-Z0-9_]*$/`.
+ */
+export type ManifestFormField = {
+  id: string;
+  label: string;
+  type: "text" | "password" | "number" | "boolean" | "select" | "template-input";
+  configKey: string;
+  envVar?: string;
+  placeholder?: string;
+  helpText?: string;
+  required?: boolean;
+  options?: { value: string; label: string }[];
+  helpLink?: { text: string; url: string };
+};
+
+/**
+ * Connection metadata for plugins that register a chat-style trigger via
+ * `api.registerConnection` (Phase 4a.2 connection lifecycle). Required when
+ * `capabilities` includes `connection.lifecycle` — the registry allOf clause
+ * rejects publishes that omit `connection{}` while declaring the capability.
+ *
+ * - `triggerIcon` MUST match `/^[A-Z][a-zA-Z0-9]*$/` (lucide-react component
+ *   name).
+ * - `triggerInputFields[].field` MUST match `/^[a-zA-Z][a-zA-Z0-9_]*$/`.
+ */
+export type ManifestConnection = {
+  triggerType: string;
+  triggerLabel: string;
+  triggerIcon: string;
+  supportsAttachments?: boolean;
+  triggerInputFields?: {
+    field: string;
+    description: string;
+  }[];
+};
+
 export type ManifestActionTool = {
   name: string;
   description: string;
@@ -123,6 +168,8 @@ export type Manifest = {
   schema?: ManifestSchemaBlock;
   capabilities: string[];
   credentials?: ManifestCredential[];
+  formFields?: ManifestFormField[];
+  connection?: ManifestConnection;
   actions: ManifestAction[];
   routes?: ManifestRoute[];
   requiredExtensions?: ManifestRequiredExtension[];
