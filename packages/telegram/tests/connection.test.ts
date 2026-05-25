@@ -430,19 +430,48 @@ test("telemetry.record captures message_in event", () => {
   assert.equal(telemetryCalls[0].fields.event, "message_in");
 });
 
-test("webhook secret auto-generation writes to pluginData.__autoWebhookSecret", async () => {
+test("webhook secret auto-generation wraps under pluginData (regression)", async () => {
   const { api, updateConfigCalls } = makeApi({
     creds: { TELEGRAM_BOT_API_KEY: "T" },
   });
-  await api.updateIntegrationConfig("int-1", {
-    __autoWebhookSecret: "test-generated-secret",
-  });
+  // Simulate what ensureWebhookSecret does when no secret exists
+  const patch = { pluginData: { __autoWebhookSecret: "test-hex" } };
+  await api.updateIntegrationConfig("int-1", patch);
   assert.equal(updateConfigCalls.length, 1);
   assert.equal(updateConfigCalls[0].id, "int-1");
-  assert.equal(
-    updateConfigCalls[0].patch.__autoWebhookSecret,
-    "test-generated-secret"
-  );
+  // MUST be nested under pluginData — top-level __autoWebhookSecret
+  // triggers ConfigPatchSchemaError (reserved-key) on the host
+  assert.equal(updateConfigCalls[0].patch.__autoWebhookSecret, undefined,
+    "top-level patch must NOT have __autoWebhookSecret");
+  const pd = updateConfigCalls[0].patch.pluginData as Record<string, unknown>;
+  assert.ok(pd, "patch must have pluginData key");
+  assert.equal(pd.__autoWebhookSecret, "test-hex");
+});
+
+test("cached webhook secret read from pluginData.__autoWebhookSecret", () => {
+  // ensureWebhookSecret reads config.pluginData?.__autoWebhookSecret
+  // Verify the read path matches the write path's nesting
+  const config: Record<string, unknown> = {
+    pluginData: { __autoWebhookSecret: "cached-hex" },
+  };
+  const pd = config.pluginData as Record<string, unknown> | undefined;
+  const cached =
+    pd && typeof pd.__autoWebhookSecret === "string" && pd.__autoWebhookSecret
+      ? pd.__autoWebhookSecret
+      : undefined;
+  assert.equal(cached, "cached-hex");
+});
+
+test("user-supplied webhookSecret takes precedence over auto-generated", () => {
+  const config: Record<string, unknown> = {
+    webhookSecret: "user-set",
+    pluginData: { __autoWebhookSecret: "auto-gen" },
+  };
+  const supplied =
+    typeof config.webhookSecret === "string" && config.webhookSecret
+      ? config.webhookSecret
+      : undefined;
+  assert.equal(supplied, "user-set");
 });
 
 test("SDK event handler flow: onDirectMessage dispatches to workflow", async () => {

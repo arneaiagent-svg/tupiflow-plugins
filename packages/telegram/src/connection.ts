@@ -51,7 +51,7 @@ async function ensureWebhookSecret(args: {
 
   const fresh = randomBytes(24).toString("hex");
   await api.updateIntegrationConfig(integrationId, {
-    __autoWebhookSecret: fresh,
+    pluginData: { __autoWebhookSecret: fresh },
   });
   return fresh;
 }
