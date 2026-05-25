@@ -25,11 +25,16 @@ export {
 } from "./host-api-types.ts";
 export type {
   Action,
+  ActionsSpec,
   AgentCreateSpec,
   AgentListFilter,
   AgentListItem,
   AgentUpdatePatch,
+  ButtonSpec,
+  CardSpec,
   ChatAttachment,
+  ChatMessage,
+  ChatMessageContentPart,
   ChatMessageEvent,
   ConnectionInstance,
   ConnectionSendReplyResult,

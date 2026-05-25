@@ -23,9 +23,13 @@ import {
 } from "./host-api-types.ts";
 import type {
   Action,
+  ActionsSpec,
   AgentCreateSpec,
   AgentListItem,
   AgentUpdatePatch,
+  ButtonSpec,
+  CardSpec,
+  ChatMessage,
   ChatMessageEvent,
   ConnectionInstance,
   ConnectionSendReplyResult,
@@ -484,6 +488,79 @@ async function _registerPluginFixture(api: PluginHostAPI): Promise<void> {
   const toolSteps: number = launchResult.toolStepsUsed;
   void responseText;
   void toolSteps;
+
+  // Phase 4e.5 batch 5b — api.chat.* surfaces
+  const inboundMessage: ChatMessage = {
+    role: "user",
+    content: "hi from telegram",
+    createdAt: new Date().toISOString(),
+  };
+  const multimodalMessage: ChatMessage = {
+    role: "assistant",
+    source: "ai",
+    content: [
+      { type: "text", text: "see attached" },
+      { type: "image", image: "https://example.com/foo.png" },
+    ],
+  };
+  void multimodalMessage;
+  const humanControlled: boolean = await api.chat.getHumanControl(
+    "int-telegram-1",
+    "thread-1"
+  );
+  void humanControlled;
+  await api.chat.appendThreadMessages(
+    "int-telegram-1",
+    "thread-1",
+    [inboundMessage],
+    "operator-user-1",
+    { adapterName: "telegram", chatId: "1" }
+  );
+  await api.chat.notifyMessageAppended(
+    "int-telegram-1",
+    "thread-1",
+    inboundMessage
+  );
+
+  // Phase 4e.5 batch 5b — api.telemetry.record
+  api.telemetry.record("tlm_connection_events", {
+    integrationId: "int-telegram-1",
+    kind: "inbound",
+  });
+
+  // Phase 4e.5 batch 5b — api.connections.shutdownPeer
+  const peerShutdown: boolean = await api.connections.shutdownPeer(
+    "int-telegram-1"
+  );
+  void peerShutdown;
+
+  // Phase 4e.5 batch 5b — sendReply discriminated-union variants
+  const replyButton: ButtonSpec = {
+    kind: "url",
+    text: "Docs",
+    url: "https://example.com",
+  };
+  const replyCard: CardSpec = {
+    text: "Pick an option",
+    buttons: [replyButton, { kind: "callback", text: "Yes", data: "yes" }],
+  };
+  const replyActions: ActionsSpec = {
+    text: "Choose one",
+    buttons: [{ kind: "webapp", text: "Open", url: "https://example.com" }],
+  };
+  const cardSpec: ConnectionSendReplySpec = {
+    integrationId: "connection-1",
+    card: replyCard,
+  };
+  const actionsSpec: ConnectionSendReplySpec = {
+    integrationId: "connection-1",
+    threadJson: { adapterName: "telegram", chatId: "1" },
+    actions: replyActions,
+  };
+  const cardResult: ConnectionSendReplyResult = await api.connections.sendReply(cardSpec);
+  const actionsResult: ConnectionSendReplyResult = await api.connections.sendReply(actionsSpec);
+  void cardResult;
+  void actionsResult;
 }
 
 export const __fixtureMarker = true;

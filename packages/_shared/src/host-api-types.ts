@@ -864,26 +864,68 @@ export type SandboxFailure = {
 
 export type SandboxResult = SandboxSuccess | SandboxFailure;
 
-export interface ConnectionSendReplySpec {
+/**
+ * Phase 4e.5 batch 5b — button primitives consumed by `CardSpec` /
+ * `ActionsSpec`. Mirrors the chat-SDK button union (`Button` for callback /
+ * modal actions, `LinkButton` for URL navigation) plus a `webapp` kind that
+ * is platform-specific (e.g. Telegram). The host maps the discriminated
+ * union to the SDK's component constructors at dispatch time so plugins do
+ * not import the `chat` package directly. On adapters without WebApp
+ * support the host downgrades a `webapp` button to a `LinkButton`.
+ */
+export type ButtonSpec =
+  | { kind: "url"; text: string; url: string }
+  | { kind: "callback"; text: string; data: string }
+  | { kind: "webapp"; text: string; url: string };
+
+/**
+ * Phase 4e.5 batch 5b — card-style reply for `api.connections.sendReply`.
+ * `text` is REQUIRED — chat adapters (Telegram, WhatsApp) reject
+ * `sendMessage` calls with empty text even when `reply_markup` carries
+ * buttons, so the host rejects a buttons-only card up front instead of
+ * letting the adapter fail downstream.
+ */
+export interface CardSpec {
+  text: string;
+  buttons?: ButtonSpec[];
+}
+
+/**
+ * Phase 4e.5 batch 5b — action-row reply for `api.connections.sendReply`.
+ * `text` is REQUIRED (same adapter constraint as `CardSpec.text`);
+ * `buttons` is also required (an actions reply with no buttons would be a
+ * card).
+ */
+export interface ActionsSpec {
+  text: string;
+  buttons: ButtonSpec[];
+}
+
+/**
+ * Phase 4e.5 batch 5b — spec passed to `api.connections.sendReply`. Exactly
+ * one of `text` / `card` / `actions` must be present; the discriminated
+ * union with explicit `?: never` exclusions enforces this at compile time
+ * AND the host re-checks at runtime. `threadJson` is OPTIONAL — when
+ * omitted the host falls back to the active thread for the integration if
+ * one is unambiguously determinable; pass through the value received on
+ * `ChatMessageEvent.threadJson` / `RegistryStepContext.threadJson` whenever
+ * possible (it serves as proof of authorized context).
+ */
+export type ConnectionSendReplySpec = {
   /** Target integration row id (must be a connection-type integration). */
   integrationId: string;
   /**
-   * Adapter-JSON thread context. Required — the host does NOT fall back
-   * to "latest thread for this integration" because that could misroute
-   * a reply to an unrelated conversation when an integration has
-   * multiple active threads. Pass the same value plugins receive on
-   * `ChatMessageEvent.threadJson` / `RegistryStepContext.threadJson`
-   * (both `unknown`); host accepts string or object and serializes as
-   * needed. threadJson serves as proof of authorized context.
-   *
-   * Typed `NonNullable<unknown>` (anything except `null`/`undefined`) so
-   * forwarding an optional source like `ctx.threadJson` fails the type
-   * check until the plugin narrows it.
+   * Adapter-JSON thread context. Host accepts string or object and
+   * serializes as needed. When omitted the host attempts to resolve the
+   * active thread from the integration; pass it whenever the call site
+   * already has it to avoid ambiguity.
    */
-  threadJson: NonNullable<unknown>;
-  /** Message text. Required, non-empty after trim. */
-  text: string;
-}
+  threadJson?: unknown;
+} & (
+  | { text: string; card?: never; actions?: never }
+  | { card: CardSpec; text?: never; actions?: never }
+  | { actions: ActionsSpec; text?: never; card?: never }
+);
 
 export interface ConnectionSendReplyResult {
   /** True when the adapter returned a successful upstream response. */
@@ -892,6 +934,54 @@ export interface ConnectionSendReplyResult {
   messageId?: string;
   /** Always returned; matches the resolved thread the post landed in. */
   threadId: string;
+}
+
+/**
+ * Phase 4e.5 batch 5b — AI-SDK-shaped content parts a `ChatMessage.content`
+ * array carries when a turn is multimodal. Mirrors the canonical host
+ * `ConnectionChatContentPart` union (see
+ * `tupiflow/backend/src/lib/db/schemas/connections.ts:ConnectionChatContentPart`).
+ * Plain text-only turns SHOULD use the shorthand `content: string` form.
+ */
+export type ChatMessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image"; image: string }
+  | { type: "file"; data: string; mediaType: string; filename?: string }
+  | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+    }
+  | {
+      type: "tool-result";
+      toolCallId: string;
+      toolName: string;
+      output: unknown;
+      isError?: boolean;
+    }
+  | { type: "reasoning"; text: string };
+
+/**
+ * Phase 4e.5 batch 5b — canonical chat-message row shape persisted by
+ * `api.chat.appendThreadMessages` and re-broadcast by
+ * `api.chat.notifyMessageAppended`. Mirrors the host's
+ * `ConnectionChatMessage` interface (see
+ * `tupiflow/backend/src/lib/db/schemas/connections.ts:ConnectionChatMessage`).
+ *
+ * - `humanUserId` is set only when the message was authored by a human
+ *   operator via the takeover UI. It is NEVER sent to LLM providers (the
+ *   host strips it in `toModelMessages`).
+ * - `source` distinguishes operator-authored assistant messages from
+ *   AI-generated ones. UI-only marker; also stripped before being passed
+ *   to LLM providers.
+ */
+export interface ChatMessage {
+  content: string | ChatMessageContentPart[];
+  role: "system" | "user" | "assistant" | "tool";
+  createdAt?: string;
+  humanUserId?: string;
+  source?: "ai" | "human";
 }
 
 export interface LaunchAgentOpts {
@@ -1196,8 +1286,110 @@ export type PluginHostAPI = {
      * and returns the delivery receipt. Capability: connection.send.
      * Ownership: any plugin with the capability + threadJson may post;
      * threadJson serves as proof of authorized context.
+     *
+     * Phase 4e.5 batch 5b — `spec` widened to a discriminated union of
+     * `text` / `card` / `actions`. Exactly one variant must be present; the
+     * host rejects mixed specs at runtime in addition to the compile-time
+     * `?: never` exclusions.
      */
     sendReply(spec: ConnectionSendReplySpec): Promise<ConnectionSendReplyResult>;
+    /**
+     * Phase 4e.5 batch 5b — force-shutdown peer instances of the caller's
+     * own integration. Used when a new instance comes up holding the same
+     * upstream credentials as an existing one (e.g. user rotated the bot
+     * token mid-run, or HMR left a stale instance attached to the upstream
+     * API).
+     *
+     * The argument is the CALLER's integrationId; the host finds sibling
+     * live instances (same plugin, same integrationType, different
+     * integrationId) and invokes the full connection-registry shutdown
+     * path on each. Plugin scope is enforced two ways: by manifest
+     * integrationType (rows of a different type are skipped) and by
+     * registered plugin name (only the caller's own instances are walked).
+     *
+     * Returns true when at least one peer was found and shutdown was
+     * initiated, false when no peer matches. No capability gate beyond
+     * the existing `connection.lifecycle` (required to register a
+     * connection in the first place).
+     */
+    shutdownPeer(integrationId: string): Promise<boolean>;
+  };
+  /**
+   * Phase 4e.5 batch 5b — chat surface for connection plugins. Wraps the
+   * host's chat-takeover + thread-history helpers so registry plugins
+   * (telegram, whatsapp, discord, etc.) can persist messages and observe
+   * the human-takeover state without reaching for bundled
+   * `#app/backend/...` modules.
+   *
+   * Capabilities:
+   *  - `getHumanControl` + `notifyMessageAppended` → `chat.takeover.read`
+   *  - `appendThreadMessages` → `chat.history.write`
+   *
+   * Plugin scope: `getHumanControl` and `appendThreadMessages` reject with
+   * a thrown `CapabilityDeniedError`-shaped error when `integrationId`
+   * resolves to a row whose integrationType differs from the calling
+   * plugin's manifest type (same posture as `fetchCredentials`).
+   * `notifyMessageAppended` runs the same cross-type check but is true
+   * fire-and-forget: any pre-emit failure (denied capability, missing
+   * integration, type mismatch, DB error) is logged via the host logger
+   * and swallowed. The returned `Promise<void>` always resolves;
+   * `.then(() => …)` chains are safe but not required.
+   *
+   * Supersedes the bundled `#app/backend/src/lib/chat-takeover.ts:
+   * getHumanControl` / `notifyMessageAppended` / `appendThreadMessages`
+   * imports for registry plugins — port targets MUST consume these via
+   * `api.chat.*` rather than the bundled symbols.
+   */
+  chat: {
+    /**
+     * Append one or more chat messages to the persisted
+     * `connection_thread_history` row for `(integrationId, threadId)`.
+     * Capability: `chat.history.write`.
+     */
+    appendThreadMessages(
+      integrationId: string,
+      threadId: string,
+      messages: ChatMessage[],
+      authorId?: string,
+      threadJsonSnapshot?: unknown
+    ): Promise<void>;
+    /**
+     * Read whether the thread is currently under human-operator control.
+     * When true, plugin reply / agent steps should no-op so the operator
+     * can drive the conversation through the /chat-connections UI.
+     * Capability: `chat.takeover.read`.
+     */
+    getHumanControl(integrationId: string, threadId: string): Promise<boolean>;
+    /**
+     * Broadcast a message-append event to the /chat-connections UI so the
+     * operator pane re-renders without a refresh. Capability:
+     * `chat.takeover.read`. Returns `Promise<void>` (async scope check
+     * requires a DB lookup) but the host swallows downstream failures so
+     * an ignored returned Promise can never produce an unhandled
+     * rejection.
+     */
+    notifyMessageAppended(
+      integrationId: string,
+      threadId: string,
+      message: ChatMessage
+    ): Promise<void>;
+  };
+  /**
+   * Phase 4e.5 batch 5b — telemetry surface. Wraps the host's
+   * telemetry-recorder facility so a registry-installed plugin can emit a
+   * row into one of the closed `tlm_*` tables without reaching for the
+   * host facility map.
+   *
+   * `metric` MUST be one of the canonical `TlmTable` strings (see
+   * `tupiflow/backend/src/lib/types/plugin-facilities.ts:TlmTable`).
+   * Unknown metrics throw `Error` at the host boundary so plugin typos
+   * surface loudly rather than silently writing into a misnamed table. The
+   * underlying recorder is fire-and-forget and never throws downstream.
+   *
+   * Capability: `telemetry.write`.
+   */
+  telemetry: {
+    record(metric: string, fields: Record<string, unknown>): void;
   };
   /**
    * §2.6 — Workflow CRUD namespace. `get`, `list`, and `getExecutionLogs`

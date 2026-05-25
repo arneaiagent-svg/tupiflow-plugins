@@ -149,7 +149,14 @@ function makeApi(opts: {
     connections: {
       types: async () => [],
       sendReply: async () => ({ delivered: false, threadId: "stub" }),
+      shutdownPeer: async () => false,
     },
+    chat: {
+      appendThreadMessages: async () => {},
+      getHumanControl: async () => false,
+      notifyMessageAppended: async () => {},
+    },
+    telemetry: { record: () => {} },
     // Phase 4f batch 1 stub — webhook test does not exercise runTask.
     runTask: async () => null,
     // Phase 4e.5 batch 3 stub — webhook test does not exercise sendErrorNotification.
