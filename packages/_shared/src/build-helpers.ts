@@ -715,11 +715,25 @@ async function runBuildOnce(
 
 async function runWatchLoop(opts: BuildPluginOptions): Promise<void> {
   // Resolve watch dirs: explicit list wins, else dirname(srcEntry) under root.
-  // Absolute paths pass through; relative paths resolve against root.
-  const dirs =
-    opts.watchDirs && opts.watchDirs.length > 0
-      ? opts.watchDirs.map((d) => resolve(opts.root, d))
-      : [resolve(opts.root, dirname(opts.srcEntry))];
+  // Absolute paths pass through; relative paths resolve against root. When
+  // the plugin declares frontendRoutes / integrationRowActions and no
+  // explicit watchDirs are passed, also watch `root/frontend` so edits to
+  // frontend sources trigger rebuilds — otherwise the browser bundle would
+  // silently stay stale during build:watch. De-duplicated via Set so a
+  // caller whose srcEntry already lives under `frontend/` (rare) doesn't
+  // get a duplicate watcher.
+  const hasFrontend =
+    (opts.frontendRoutes && opts.frontendRoutes.length > 0) ||
+    (opts.integrationRowActions && opts.integrationRowActions.length > 0);
+  const defaultDirs = [resolve(opts.root, dirname(opts.srcEntry))];
+  if (hasFrontend) defaultDirs.push(resolve(opts.root, "frontend"));
+  const dirs = [
+    ...new Set(
+      opts.watchDirs && opts.watchDirs.length > 0
+        ? opts.watchDirs.map((d) => resolve(opts.root, d))
+        : defaultDirs,
+    ),
+  ];
 
   // Loop-avoidance: a watched dir equal to or ancestor of distDir would
   // re-fire on every build write and spin rebuilds forever.
