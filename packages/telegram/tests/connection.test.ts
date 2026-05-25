@@ -500,6 +500,29 @@ test("ensureWebhookSecret returns user-supplied webhookSecret without persistenc
   assert.equal(updateConfigCalls.length, 0);
 });
 
+test("ensureWebhookSecret throws clear error when host lacks setOwnPluginData (host-compat)", async () => {
+  const { api } = makeApi({ creds: { TELEGRAM_BOT_API_KEY: "T" } });
+  // Simulate an older host that has connections.* but no setOwnPluginData.
+  const legacyApi = {
+    ...api,
+    connections: {
+      ...api.connections,
+      setOwnPluginData: undefined as unknown as
+        PluginHostAPI["connections"]["setOwnPluginData"],
+    },
+  } as PluginHostAPI;
+  await assert.rejects(
+    () =>
+      ensureWebhookSecret({
+        api: legacyApi,
+        integrationId: "int-1",
+        config: {},
+      }),
+    /setOwnPluginData/,
+    "must throw a self-describing error rather than crashing on undefined call"
+  );
+});
+
 test("ensureWebhookSecret returns cached __autoWebhookSecret without calling either surface", async () => {
   const { api, setOwnPluginDataCalls, updateConfigCalls } = makeApi({
     creds: { TELEGRAM_BOT_API_KEY: "T" },

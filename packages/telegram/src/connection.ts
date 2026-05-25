@@ -55,7 +55,24 @@ export async function ensureWebhookSecret(args: {
   if (cached) return cached;
 
   const fresh = randomBytes(24).toString("hex");
-  await api.connections.setOwnPluginData(integrationId, {
+  // Feature-detect the boot-scope-safe surface. Older tupiflow hosts
+  // (pre-`api.connections.setOwnPluginData`) leave this method undefined;
+  // calling it would throw a TypeError that masks the real compatibility
+  // gap. The plugin's manifest gate (min_tupiflow_version) is the
+  // canonical guard, but until the host adopts versioned API tags this
+  // runtime check produces a self-describing error for fresh installs.
+  const setOwn =
+    api.connections && typeof api.connections.setOwnPluginData === "function"
+      ? api.connections.setOwnPluginData.bind(api.connections)
+      : undefined;
+  if (!setOwn) {
+    throw new Error(
+      "telegram: host is missing api.connections.setOwnPluginData. " +
+        "Upgrade tupiflow to the version that exposes this surface, or " +
+        "provide a top-level config.webhookSecret to bypass auto-generation."
+    );
+  }
+  await setOwn(integrationId, {
     pluginData: { __autoWebhookSecret: fresh },
   });
   return fresh;
