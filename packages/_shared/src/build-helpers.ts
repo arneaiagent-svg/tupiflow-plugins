@@ -21,8 +21,8 @@ import {
   watch,
   writeFile,
 } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import * as tar from "tar";
 import { parse as parseToml } from "toml";
 
 import type { WorkerSpec } from "./host-api-types.ts";
@@ -546,10 +546,16 @@ async function runBuildOnce(
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 
   const tgzPath = resolve(distDir, "bundle.tgz");
-  execFileSync(
-    "tar",
-    ["-czf", tgzPath, "-C", distDir, ...tarEntries],
-    { stdio: "inherit" }
+  const sortedEntries = [...tarEntries].sort();
+  await tar.c(
+    {
+      gzip: true,
+      portable: true,
+      mtime: new Date(0),
+      cwd: distDir,
+      file: tgzPath,
+    },
+    sortedEntries
   );
 
   const tgzBytes = await readFile(tgzPath);

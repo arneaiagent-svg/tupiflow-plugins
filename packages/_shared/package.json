@@ -1,6 +1,6 @@
 {
 	"name": "@tupiflow-plugins/shared",
-	"version": "0.17.0",
+	"version": "0.18.0",
 	"private": true,
 	"type": "module",
 	"main": "./src/index.ts",
@@ -14,5 +14,8 @@
 	"scripts": {
 		"type-check": "tsc --noEmit",
 		"test": "tsc --noEmit && node --test --experimental-strip-types src/build-helpers.test.ts"
+	},
+	"dependencies": {
+		"tar": "^7.4.3"
 	}
 }
