@@ -130,6 +130,64 @@ export type ManifestTakeoverTarget = {
 };
 
 /**
+ * Full top-level dashboard page contributed by the plugin. Host mounts each
+ * declared entry at /plugins/<pluginName><path> with a sidebar entry, fetches
+ * the compiled frontend ESM at runtime (served by host backend from extracted
+ * bundle storage), and mounts `componentExport` into the host React tree.
+ *
+ * Declaring a non-empty `Manifest.frontendRoutes` is a full-trust escalation
+ * comparable to backend code execution — the plugin code runs with access to
+ * host React context (auth cookies, hooks, atoms). The publisher-trust gate
+ * at registry publish is the consent boundary; the operator's caps approval
+ * dialog at install surfaces "this plugin renders frontend UI" as a row.
+ *
+ * Schema mirror: tupiflow-registry/internal/manifest/schema.json
+ * `$defs.frontendRoute`. Registry-enforced constraints (carried as
+ * plugin-author hints; the registry validator is authoritative):
+ *  - `path`: 1..64 chars, MUST match `^/[a-z0-9][a-z0-9/_-]*$`.
+ *  - `label`: 1..64 chars.
+ *  - `icon` (optional): 1..64 chars, lucide-react component name
+ *    (`^[A-Za-z][A-Za-z0-9]*$`).
+ *  - `componentExport`: PascalCase identifier
+ *    (`^[A-Z][A-Za-z0-9]*$`), 1..64 chars — named export from the bundle.
+ *  - `bundleEntry`: 1..128 chars, MUST match
+ *    `^frontend/[a-z0-9][a-z0-9/_-]*\.mjs$` (path-traversal defense at
+ *    schema level; `buildPlugin` emits to this exact relative path).
+ */
+export type ManifestFrontendRoute = {
+  path: string;
+  label: string;
+  icon?: string;
+  componentExport: string;
+  bundleEntry: string;
+};
+
+/**
+ * Per-integration-row button + overlay contributed by the plugin. Host
+ * renders each button alongside built-in row actions in the integrations
+ * list; click opens an overlay mounting `componentExport` with row props
+ * `{ integrationId, integrationType, integration }` injected by the host
+ * runtime.
+ *
+ * Same full-trust posture as `ManifestFrontendRoute` — see above.
+ *
+ * Schema mirror: tupiflow-registry/internal/manifest/schema.json
+ * `$defs.integrationRowAction`. Registry-enforced constraints (the
+ * registry validator is authoritative):
+ *  - `label`: 1..64 chars.
+ *  - `icon` (optional): same lucide-name shape as `frontendRoute.icon`.
+ *  - `componentExport`: PascalCase identifier, 1..64 chars.
+ *  - `bundleEntry`: same `^frontend/...\.mjs$` shape as
+ *    `frontendRoute.bundleEntry`.
+ */
+export type ManifestIntegrationRowAction = {
+  label: string;
+  icon?: string;
+  componentExport: string;
+  bundleEntry: string;
+};
+
+/**
  * Postgres extensions the plugin depends on. The customer-side installer runs
  * `CREATE EXTENSION IF NOT EXISTS <name>` per entry inside the install
  * transaction (defense-in-depth — extensions are pre-installed by the
@@ -231,6 +289,28 @@ export type Manifest = {
    * See PHASE_4F_PLUGIN_DEPS_AND_WORKERS.md batch 2.
    */
   requiredNpmDeps?: Record<string, string>;
+  /**
+   * Full top-level dashboard pages contributed by this plugin. Host mounts
+   * each at `/plugins/<name><path>` and renders a sidebar entry. Optional;
+   * absence means the plugin contributes no top-level frontend routes. Cap
+   * at 8 entries enforced by registry schema (`frontendRoutes.maxItems`).
+   *
+   * Coordinate with `routes?: ManifestRoute[]` (Hono backend) for any API
+   * endpoints the frontend needs to call. The two arrays are independent —
+   * a plugin can declare backend routes without frontend, or vice versa.
+   * Each entry's `bundleEntry` corresponds to a compiled ESM module emitted
+   * under `dist/frontend/<sub>.mjs` by `buildPlugin`.
+   */
+  frontendRoutes?: ManifestFrontendRoute[];
+  /**
+   * Per-integration-row buttons + overlays contributed by this plugin.
+   * Optional; absence means the plugin contributes no per-row UI. Cap at 8
+   * entries enforced by registry schema (`integrationRowActions.maxItems`).
+   * Each entry's `bundleEntry` shares the same emit convention as
+   * `frontendRoutes` and may reuse the same compiled bundle if multiple
+   * components are exported from one entry.
+   */
+  integrationRowActions?: ManifestIntegrationRowAction[];
   /**
    * Hint to the host install pipeline: when true, the host skips
    * activation after pnpm-add of requiredNpmDeps, marks the install row

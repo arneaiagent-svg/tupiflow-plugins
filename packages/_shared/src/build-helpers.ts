@@ -32,6 +32,8 @@ import type {
   ManifestConnection,
   ManifestCredential,
   ManifestFormField,
+  ManifestFrontendRoute,
+  ManifestIntegrationRowAction,
   ManifestRequiredExtension,
   ManifestRoute,
   ManifestSchemaBlock,
@@ -69,6 +71,59 @@ export const BLESSED_HOST_MODULES = {
   "@ai-sdk/mistral": "^3.0.35",
   canonicalize: "^3.0.0",
 } as const;
+
+/**
+ * Frontend extension — modules the host frontend exposes to plugin frontend
+ * bundles at runtime via an importmap. Plugin frontend bundles MUST mark
+ * these as esbuild `external` — bundling them produces duplicate-React /
+ * hooks-mismatch crashes at mount (two React instances cannot share hook
+ * state).
+ *
+ * Pin discipline:
+ *  - Versions are governed by the host's `tupiflow/package.json` at the time
+ *    of host release (the host is a single-package repo — frontend and
+ *    backend share one dependency list). A host React-major bump breaks ALL
+ *    installed plugin frontends until republished. Treat bless-set major
+ *    bumps as a breaking change for the shim; ship behind a major `_shared`
+ *    version.
+ *  - Adding a new entry is non-breaking for existing plugins (they simply
+ *    won't import it). Removing or narrowing an entry IS breaking.
+ *  - Seed too few: plugins re-bundle giant deps + may end up with
+ *    duplicate-React if a transitive dep pulls React back in.
+ *  - Seed too many: host version drift breaks every plugin on upgrade.
+ *
+ * Reconciliation log (vs tupiflow/package.json @ 0.1.0):
+ *  - react, react-dom: present (19.2.1) → kept.
+ *  - react/jsx-runtime: react subpath, no separate dep → kept (esbuild
+ *    treats it as a distinct external specifier when `jsx: "automatic"`).
+ *  - @tanstack/react-query: present (^5.100.9) → kept.
+ *  - react-router: present (^7.14.2; NOT `react-router-dom`) → kept.
+ *  - lucide-react: present (^0.552.0) → kept.
+ *  - recharts: added — present in host (3.8.0) AND the blocked telemetry
+ *    plugin imports it heavily across 17 section components per
+ *    FRONTEND_PLUGIN_UI_CAPABILITY_AUDIT.md §A.1; without externalization
+ *    the telemetry frontend bundle would inline a multi-hundred-KB charting
+ *    runtime AND a second React instance (recharts depends on react).
+ *
+ * NOT included by default:
+ *  - Radix UI primitives / `radix-ui`: blocked plugins consume host UI via
+ *    `useOverlay()` (FRONTEND_PLUGIN_UI_CAPABILITY_AUDIT.md §A.4), not via
+ *    direct Radix imports. Revisit if a real plugin needs a Radix primitive
+ *    that the host shell does not wrap.
+ *  - Tailwind utility classes: bundled into the plugin's compiled CSS or
+ *    inlined per existing-plugin posture — no module to externalize.
+ *  - `motion`, `sonner`, `cmdk`, etc.: host-shipped but no blocked plugin
+ *    imports them today; add when a real consumer needs them.
+ */
+export const BLESSED_BROWSER_MODULES = [
+  "react",
+  "react-dom",
+  "react/jsx-runtime",
+  "@tanstack/react-query",
+  "react-router",
+  "lucide-react",
+  "recharts",
+] as const;
 
 /**
  * §4f batch 2 — npm package-name format check for `manifest.requiredNpmDeps`.
@@ -121,6 +176,17 @@ export function assertNpmPackageNameValid(name: string): void {
 }
 
 const WORKER_ENTRY_RE = /^workers\/[a-zA-Z0-9_-]+\.mjs$/;
+
+/**
+ * Registry-schema regex for `frontendRoute.bundleEntry` /
+ * `integrationRowAction.bundleEntry` (see
+ * tupiflow-registry/internal/manifest/schema.json). Path-traversal defense:
+ * forces the entry under `frontend/`, ends with `.mjs`, no leading dots,
+ * lowercase + alnum + `/`/`_`/`-` only. Mirrored at build time so a
+ * malformed entry surfaces locally before publish (registry validator is
+ * authoritative on this regex).
+ */
+const FRONTEND_BUNDLE_ENTRY_RE = /^frontend\/[a-z0-9][a-z0-9/_-]*\.mjs$/;
 
 export type BuildPluginOptions = {
   root: string;
@@ -199,6 +265,24 @@ export type BuildPluginOptions = {
    * with this shim.
    */
   requiredNpmDeps?: Record<string, string>;
+  /**
+   * Top-level dashboard pages contributed by the plugin. Each entry's
+   * `bundleEntry` MUST resolve to a source file under
+   * `root/frontend/<sub>.{tsx,ts,jsx,js}`; the build helper compiles to
+   * `distDir/<bundleEntry>` (esbuild, browser ESM target, `BLESSED_BROWSER_MODULES`
+   * external) and emits the declared array verbatim onto
+   * `manifest.frontendRoutes`. Compiled bundles participate in the
+   * deterministic tar manifest so the signing root stays byte-stable.
+   */
+  frontendRoutes?: ManifestFrontendRoute[];
+  /**
+   * Per-integration-row buttons + overlays contributed by the plugin. Same
+   * build pipeline + emit contract as `frontendRoutes`. Entries may share
+   * `bundleEntry` paths with `frontendRoutes` (one ESM module can export
+   * multiple components); the helper deduplicates the source-compile pass
+   * across both arrays.
+   */
+  integrationRowActions?: ManifestIntegrationRowAction[];
   /**
    * Forwarded verbatim to manifest.requiresHostRestart. See
    * `manifest-types.ts` for semantics. Default false (omitted from
@@ -482,6 +566,54 @@ async function runBuildOnce(
     }
   }
 
+  // Frontend bundles — per declared frontendRoutes[].bundleEntry +
+  // integrationRowActions[].bundleEntry. The union is collected (a plugin may
+  // share one entry across multiple routes / row actions when one ESM exports
+  // multiple components) and each unique entry compiles once. Each compiles
+  // to `distDir/<bundleEntry>` so the host static endpoint can serve at
+  // `/plugins/<name>/<bundleEntry>` without re-deriving paths.
+  //
+  // minify:false + sourcemap:false keep output byte-stable across builds
+  // (the compiled bundle participates in the signing root via the
+  // deterministic tar — see HANDOFF_REPRODUCIBLE_BUNDLE_TAR.md).
+  const frontendEntrySet = new Set<string>();
+  for (const r of opts.frontendRoutes ?? []) frontendEntrySet.add(r.bundleEntry);
+  for (const a of opts.integrationRowActions ?? [])
+    frontendEntrySet.add(a.bundleEntry);
+
+  if (frontendEntrySet.size > 0) {
+    // Sort for deterministic compile order — esbuild output is byte-stable
+    // per entry, but iterating a Set is insertion-ordered and depends on the
+    // caller's array order. Sorting decouples emit order from caller order.
+    const frontendEntries = [...frontendEntrySet].sort();
+    await mkdir(resolve(distDir, "frontend"), { recursive: true });
+    for (const bundleEntry of frontendEntries) {
+      if (!FRONTEND_BUNDLE_ENTRY_RE.test(bundleEntry)) {
+        throw new Error(
+          `buildPlugin: frontend bundleEntry "${bundleEntry}" does not match registry regex ^frontend/[a-z0-9][a-z0-9/_-]*\\.mjs$ (path-traversal defense).`
+        );
+      }
+      const sourceAbs = await resolveFrontendSource(root, bundleEntry);
+      const outPath = resolve(distDir, bundleEntry);
+      await mkdir(resolve(outPath, ".."), { recursive: true });
+      await build({
+        entryPoints: [sourceAbs],
+        bundle: true,
+        platform: "browser",
+        format: "esm",
+        target: "es2022",
+        outfile: outPath,
+        external: [...BLESSED_BROWSER_MODULES],
+        minify: false,
+        sourcemap: false,
+        legalComments: "none",
+        jsx: "automatic",
+        logLevel: "info",
+      });
+      tarEntries.push(bundleEntry);
+    }
+  }
+
   const bundleBytes = await readFile(bundlePath);
   const bundleMjsSha = createHash("sha256").update(bundleBytes).digest("hex");
 
@@ -528,6 +660,12 @@ async function runBuildOnce(
     ...(manifestWorkers.length > 0 ? { workers: manifestWorkers } : {}),
     ...(opts.requiredNpmDeps && Object.keys(opts.requiredNpmDeps).length > 0
       ? { requiredNpmDeps: opts.requiredNpmDeps }
+      : {}),
+    ...(opts.frontendRoutes && opts.frontendRoutes.length > 0
+      ? { frontendRoutes: opts.frontendRoutes }
+      : {}),
+    ...(opts.integrationRowActions && opts.integrationRowActions.length > 0
+      ? { integrationRowActions: opts.integrationRowActions }
       : {}),
     ...(opts.requiresHostRestart ? { requiresHostRestart: true } : {}),
     ...(toml.takeoverTargets && toml.takeoverTargets.length > 0
@@ -672,4 +810,32 @@ async function runWatchLoop(opts: BuildPluginOptions): Promise<void> {
     "[buildPlugin] watch mode: " + dirs.join(", ") + " (Ctrl-C to exit)"
   );
   await Promise.all(watchers);
+}
+
+/**
+ * Resolve the on-disk source file for a declared `bundleEntry`. The entry's
+ * `.mjs` extension is stripped and the resulting stem is probed under `root`
+ * with `.tsx`, `.ts`, `.jsx`, `.js` in that order — .tsx first because every
+ * blocked plugin in `FRONTEND_PLUGIN_UI_CAPABILITY_AUDIT.md` ships .tsx
+ * sources. Throws a clear error when no candidate exists so the operator
+ * sees a precise path mismatch instead of an esbuild "no such file".
+ */
+async function resolveFrontendSource(
+  root: string,
+  bundleEntry: string
+): Promise<string> {
+  const stem = bundleEntry.replace(/\.mjs$/, "");
+  const exts = [".tsx", ".ts", ".jsx", ".js"] as const;
+  for (const ext of exts) {
+    const candidate = resolve(root, stem + ext);
+    try {
+      await stat(candidate);
+      return candidate;
+    } catch {
+      // not found, try next
+    }
+  }
+  throw new Error(
+    `buildPlugin: frontend bundleEntry "${bundleEntry}" has no matching source at ${stem}.{tsx,ts,jsx,js} under root "${root}".`
+  );
 }

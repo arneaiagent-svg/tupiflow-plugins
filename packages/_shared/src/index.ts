@@ -7,6 +7,7 @@
 export {
   assertFormFieldEnvVarsDeclared,
   assertNpmPackageNameValid,
+  BLESSED_BROWSER_MODULES,
   BLESSED_HOST_MODULES,
   buildPlugin,
 } from "./build-helpers.ts";
@@ -105,10 +106,12 @@ export type {
   ManifestConnection,
   ManifestCredential,
   ManifestFormField,
+  ManifestFrontendRoute,
   ManifestIcon,
   ManifestIconLucide,
   ManifestIconSvg,
   ManifestIdentity,
+  ManifestIntegrationRowAction,
   ManifestRequiredExtension,
   ManifestRoute,
   ManifestRuntime,
