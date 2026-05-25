@@ -90,6 +90,7 @@ function makeApi(): MockApi {
       types: async () => [],
       sendReply: async () => ({ delivered: false, threadId: "stub" }),
       shutdownPeer: async () => false,
+      setOwnPluginData: async () => {},
     },
     chat: {
       appendThreadMessages: async () => {},

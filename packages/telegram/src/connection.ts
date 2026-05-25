@@ -23,10 +23,15 @@ export interface StartInstanceDeps {
  * User-supplied (top-level config.webhookSecret from form field) takes
  * precedence. If absent, falls back to a prior auto-generated value stored
  * in pluginData.__autoWebhookSecret. If neither exists, generates a fresh
- * secret and persists it via updateIntegrationConfig (which writes to
- * config.pluginData.__autoWebhookSecret).
+ * secret and persists it via api.connections.setOwnPluginData (which writes
+ * to config.pluginData.__autoWebhookSecret).
+ *
+ * Must use setOwnPluginData rather than updateIntegrationConfig because
+ * ensureWebhookSecret runs at boot via startInstance, which has no
+ * request/step scope (no userId). setOwnPluginData is bound by plugin
+ * name + integration type and requires no caller scope.
  */
-async function ensureWebhookSecret(args: {
+export async function ensureWebhookSecret(args: {
   api: PluginHostAPI;
   integrationId: string;
   config: Record<string, unknown>;
@@ -50,7 +55,7 @@ async function ensureWebhookSecret(args: {
   if (cached) return cached;
 
   const fresh = randomBytes(24).toString("hex");
-  await api.updateIntegrationConfig(integrationId, {
+  await api.connections.setOwnPluginData(integrationId, {
     pluginData: { __autoWebhookSecret: fresh },
   });
   return fresh;

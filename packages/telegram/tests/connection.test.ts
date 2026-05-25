@@ -5,6 +5,7 @@ import type { PluginHostAPI } from "@tupiflow-plugins/shared/host-api-types";
 
 import {
   buildTelegramThreadJson,
+  ensureWebhookSecret,
   makeStartInstance,
 } from "../src/connection.ts";
 import { createInstanceRegistry } from "../src/webhook.ts";
@@ -37,6 +38,10 @@ interface MockApi {
   dispatchCalls: DispatchCall[];
   shutdownPeerCalls: string[];
   updateConfigCalls: Array<{ id: string; patch: Record<string, unknown> }>;
+  setOwnPluginDataCalls: Array<{
+    id: string;
+    patch: { pluginData: Record<string, unknown> };
+  }>;
   appendCalls: AppendCall[];
   notifyCalls: NotifyCall[];
   humanControlMap: Map<string, boolean>;
@@ -52,6 +57,10 @@ function makeApi(args: {
   const updateConfigCalls: Array<{
     id: string;
     patch: Record<string, unknown>;
+  }> = [];
+  const setOwnPluginDataCalls: Array<{
+    id: string;
+    patch: { pluginData: Record<string, unknown> };
   }> = [];
   const appendCalls: AppendCall[] = [];
   const notifyCalls: NotifyCall[] = [];
@@ -137,6 +146,9 @@ function makeApi(args: {
         shutdownPeerCalls.push(id);
         return false;
       },
+      setOwnPluginData: async (id, patch) => {
+        setOwnPluginDataCalls.push({ id, patch });
+      },
     },
     chat: {
       appendThreadMessages: async (integrationId, threadId, messages) => {
@@ -169,6 +181,7 @@ function makeApi(args: {
     dispatchCalls,
     shutdownPeerCalls,
     updateConfigCalls,
+    setOwnPluginDataCalls,
     appendCalls,
     notifyCalls,
     humanControlMap,
@@ -430,36 +443,79 @@ test("telemetry.record captures message_in event", () => {
   assert.equal(telemetryCalls[0].fields.event, "message_in");
 });
 
-test("webhook secret auto-generation wraps under pluginData (regression)", async () => {
-  const { api, updateConfigCalls } = makeApi({
+test("ensureWebhookSecret writes via setOwnPluginData, NOT updateIntegrationConfig (0.4.7 regression)", async () => {
+  const { api, setOwnPluginDataCalls, updateConfigCalls } = makeApi({
     creds: { TELEGRAM_BOT_API_KEY: "T" },
   });
-  // Simulate what ensureWebhookSecret does when no secret exists
-  const patch = { pluginData: { __autoWebhookSecret: "test-hex" } };
-  await api.updateIntegrationConfig("int-1", patch);
-  assert.equal(updateConfigCalls.length, 1);
-  assert.equal(updateConfigCalls[0].id, "int-1");
-  // MUST be nested under pluginData — top-level __autoWebhookSecret
-  // triggers ConfigPatchSchemaError (reserved-key) on the host
-  assert.equal(updateConfigCalls[0].patch.__autoWebhookSecret, undefined,
-    "top-level patch must NOT have __autoWebhookSecret");
-  const pd = updateConfigCalls[0].patch.pluginData as Record<string, unknown>;
+  // No webhookSecret, no cached pluginData → ensureWebhookSecret must
+  // generate fresh + persist via api.connections.setOwnPluginData
+  // (the boot-scope safe surface). It must NOT call
+  // api.updateIntegrationConfig, which requires request/step scope and
+  // fails at startInstance with StepContextUnresolvableError.
+  const fresh = await ensureWebhookSecret({
+    api,
+    integrationId: "int-1",
+    config: {},
+  });
+  assert.equal(typeof fresh, "string");
+  assert.equal(fresh.length, 48, "24-byte hex = 48 chars");
+  assert.equal(
+    setOwnPluginDataCalls.length,
+    1,
+    "must invoke api.connections.setOwnPluginData exactly once"
+  );
+  assert.equal(setOwnPluginDataCalls[0].id, "int-1");
+  // Payload MUST be { pluginData: { __autoWebhookSecret: <hex> } } —
+  // unchanged from 0.4.6's wrap shape; only surface name changes.
+  const pd = setOwnPluginDataCalls[0].patch.pluginData;
   assert.ok(pd, "patch must have pluginData key");
-  assert.equal(pd.__autoWebhookSecret, "test-hex");
+  assert.equal(pd.__autoWebhookSecret, fresh);
+  // Runtime check: top-level patch must NOT have __autoWebhookSecret.
+  // Cast to Record<string, unknown> since the static type forbids the
+  // key — the runtime guard catches an accidental flat-shape regression.
+  const patchRoot = setOwnPluginDataCalls[0].patch as Record<string, unknown>;
+  assert.equal(
+    patchRoot.__autoWebhookSecret,
+    undefined,
+    "top-level patch must NOT have __autoWebhookSecret"
+  );
+  assert.equal(
+    updateConfigCalls.length,
+    0,
+    "must NOT invoke api.updateIntegrationConfig (boot scope has no userId)"
+  );
 });
 
-test("cached webhook secret read from pluginData.__autoWebhookSecret", () => {
-  // ensureWebhookSecret reads config.pluginData?.__autoWebhookSecret
-  // Verify the read path matches the write path's nesting
-  const config: Record<string, unknown> = {
-    pluginData: { __autoWebhookSecret: "cached-hex" },
-  };
-  const pd = config.pluginData as Record<string, unknown> | undefined;
-  const cached =
-    pd && typeof pd.__autoWebhookSecret === "string" && pd.__autoWebhookSecret
-      ? pd.__autoWebhookSecret
-      : undefined;
-  assert.equal(cached, "cached-hex");
+test("ensureWebhookSecret returns user-supplied webhookSecret without persistence", async () => {
+  const { api, setOwnPluginDataCalls, updateConfigCalls } = makeApi({
+    creds: { TELEGRAM_BOT_API_KEY: "T" },
+  });
+  const out = await ensureWebhookSecret({
+    api,
+    integrationId: "int-1",
+    config: { webhookSecret: "user-set" },
+  });
+  assert.equal(out, "user-set");
+  assert.equal(setOwnPluginDataCalls.length, 0);
+  assert.equal(updateConfigCalls.length, 0);
+});
+
+test("ensureWebhookSecret returns cached __autoWebhookSecret without calling either surface", async () => {
+  const { api, setOwnPluginDataCalls, updateConfigCalls } = makeApi({
+    creds: { TELEGRAM_BOT_API_KEY: "T" },
+  });
+  const out = await ensureWebhookSecret({
+    api,
+    integrationId: "int-1",
+    config: { pluginData: { __autoWebhookSecret: "cached-hex" } },
+  });
+  assert.equal(out, "cached-hex");
+  assert.equal(
+    setOwnPluginDataCalls.length,
+    0,
+    "cached value must not trigger a write"
+  );
+  assert.equal(updateConfigCalls.length, 0);
 });
 
 test("user-supplied webhookSecret takes precedence over auto-generated", () => {
