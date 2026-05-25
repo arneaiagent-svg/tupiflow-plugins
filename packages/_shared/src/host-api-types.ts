@@ -1313,6 +1313,37 @@ export type PluginHostAPI = {
      * connection in the first place).
      */
     shutdownPeer(integrationId: string): Promise<boolean>;
+    /**
+     * Boot-scope-safe self-write of the calling plugin's own pluginData
+     * for `integrationId`. Designed for lifecycle hooks (startInstance,
+     * registerConnection) that need to persist small state (auto-generated
+     * webhook secrets, last-seen cursors, version stamps) before any
+     * request/step scope exists.
+     *
+     * Differs from `api.updateIntegrationConfig` in three ways:
+     *  - No `pluginCallContext` scope required (callable from boot
+     *    reconciler / startInstance without `runWithPluginCallContext`).
+     *  - Authorization axis: plugin-name + integrationType match (no
+     *    userId concept).
+     *  - Subtree restriction: writes ONLY `config.pluginData.*`. Top-level
+     *    config keys (apiKey, OAuth tokens, etc.) are unwritable.
+     *
+     * Patch shape: `{ pluginData: { ... } }`. Same depth + reserved-key
+     * rules as `updateIntegrationConfig`. Empty `pluginData` is a no-op.
+     *
+     * Throws:
+     *  - `IntegrationNotFoundError` when integrationId does not exist.
+     *  - `IntegrationTypeMismatchError` when row.type !== plugin's type.
+     *  - `ConfigPatchSchemaError` on malformed patch root, non-object
+     *    pluginData, depth-exceeded, or reserved-key violations.
+     *
+     * Capability: none (per project's permissive-caps feedback — pure
+     * own-namespace self-write is not trust-root).
+     */
+    setOwnPluginData(
+      integrationId: string,
+      patch: { pluginData: Record<string, unknown> }
+    ): Promise<void>;
   };
   /**
    * Phase 4e.5 batch 5b — chat surface for connection plugins. Wraps the
