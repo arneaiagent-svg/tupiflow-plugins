@@ -56,6 +56,7 @@ import type {
  * verifies presence + semver range at install time.
  */
 export const BLESSED_HOST_MODULES = {
+  "@chat-adapter/state-pg": "^4.26.0",
   zod: "^4.1.12",
   hono: "^4.12.17",
   "drizzle-orm": "^0.44.7",
