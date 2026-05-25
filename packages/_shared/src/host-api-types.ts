@@ -1344,6 +1344,52 @@ export type PluginHostAPI = {
       integrationId: string,
       patch: { pluginData: Record<string, unknown> }
     ): Promise<void>;
+    /**
+     * Tear down + re-spawn the calling plugin's own live connection
+     * instance for `integrationId`. Equivalent to invoking
+     * `removeConnection(id)` followed by `addConnection(integration)`
+     * inside the host's connection-registry, scoped to the caller's
+     * own plugin + manifest integrationType.
+     *
+     * Used by plugins whose transport is stateful (live WebSocket,
+     * on-disk session) and whose operator-facing reset/relink flow
+     * needs the in-process socket to fully die before a fresh one
+     * comes up. Token-based connections (Telegram) typically do not
+     * need this — config-row update is enough.
+     *
+     * Semantics:
+     *  - When no live instance exists for `integrationId`, the host
+     *    still attempts a fresh `addConnection(integration)` so the
+     *    caller has a uniform "instance should be running after this
+     *    resolves" guarantee. Returns false in that case to signal
+     *    no prior instance was reaped.
+     *  - When a live instance exists: host invokes its `shutdown()`
+     *    (errors logged + swallowed; shutdown is best-effort), drops
+     *    the registry entry, then invokes `addConnection` with a
+     *    freshly-loaded integration row. Returns true when the
+     *    `addConnection` path produces a non-null instance.
+     *  - Caller is expected to perform any out-of-band cleanup
+     *    (session-dir wipe, chat-state row delete) BEFORE invoking
+     *    this method — the host does not own those side effects.
+     *
+     * Scope guards (defense in depth; route-handler auth gate is
+     * authoritative for owner-scope):
+     *  - Plugin-name match: refuses when the integration row was
+     *    started by a different registered plugin.
+     *  - Manifest-type match: refuses when the integration row's
+     *    type differs from the caller's manifest integrationType.
+     *
+     * Throws:
+     *  - `IntegrationNotFoundError` when integrationId does not
+     *    resolve to a stored row (the row may have been deleted in
+     *    parallel; caller should surface a 404 to the operator).
+     *  - `IntegrationTypeMismatchError` when row.type !== plugin's
+     *    declared integrationType.
+     *
+     * Capability: `connection.lifecycle` (already required to
+     * register a connection in the first place; no new cap).
+     */
+    restart?(integrationId: string): Promise<boolean>;
   };
   /**
    * Phase 4e.5 batch 5b — chat surface for connection plugins. Wraps the
