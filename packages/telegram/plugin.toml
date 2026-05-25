@@ -1,15 +1,20 @@
-capabilities = ["net.fetch", "secrets.read", "connection.lifecycle", "workflow.dispatch", "integration.test"]
+capabilities = ["net.fetch", "secrets.read", "connection.lifecycle", "workflow.dispatch", "integration.test", "chat.takeover.read", "chat.history.write", "telemetry.write"]
 
 [identity]
 name        = "telegram"
 type        = "telegram"
-version     = "0.4.4"
+version     = "0.4.5"
 publisher   = "tupiflow"
 description = "Telegram bot integration. Reply to chat threads and receive webhook updates."
 
 [runtime]
 min_tupiflow_version = "0.0.0"
+requires_host_restart = true
 
 [icon]
 kind = "svg"
 path = "icon.svg"
+
+[required_npm_deps]
+"@chat-adapter/telegram" = "^4.26.0"
+"chat"                   = "^4.26.0"

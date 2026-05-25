@@ -1,181 +1,267 @@
+import { randomBytes } from "node:crypto";
+
 import type {
+  ChatAttachment,
+  ChatMessage,
+  ChatMessageEvent,
   ConnectionInstance,
   PluginHostAPI,
 } from "@tupiflow-plugins/shared/host-api-types";
+import { createTelegramAdapter } from "@chat-adapter/telegram";
+import { Chat, type Attachment, type Message, type ThreadImpl } from "chat";
+import { createPostgresState } from "@chat-adapter/state-pg";
 
-import {
-  type InstanceRegistry,
-  type InstanceState,
-  type TelegramUpdate,
-  processTelegramUpdate,
-} from "./webhook.ts";
+import type { InstanceRegistry } from "./webhook.ts";
 
 export interface StartInstanceDeps {
   api: PluginHostAPI;
   registry: InstanceRegistry;
 }
 
-const TELEGRAM_API_ROOT = "https://api.telegram.org";
-const POLL_TIMEOUT_SECONDS = 25;
-const POLL_BACKOFF_MS = 5000;
-
-function webhookUrlFor(baseUrl: string, integrationId: string): string {
-  return `${baseUrl}/plugins/telegram/webhook/${integrationId}`;
-}
-
-async function callTelegramApi(
-  api: PluginHostAPI,
-  botToken: string,
-  method: string,
-  body: Record<string, unknown>,
-  init?: { signal?: AbortSignal }
-): Promise<{ ok: boolean; description?: string; result?: unknown }> {
-  try {
-    const response = await api.fetch(
-      `${TELEGRAM_API_ROOT}/bot${botToken}/${method}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        ...(init?.signal ? { signal: init.signal } : {}),
-      }
-    );
-    let parsed: { ok?: boolean; description?: string; result?: unknown } = {};
-    try {
-      parsed = (await response.json()) as {
-        ok?: boolean;
-        description?: string;
-        result?: unknown;
-      };
-    } catch {
-      // Telegram occasionally returns non-JSON on transport-level errors;
-      // treat as failure rather than throwing.
-    }
-    return {
-      ok: response.ok && parsed.ok !== false,
-      description: parsed.description,
-      result: parsed.result,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      description: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-interface PollingHandle {
-  stop(): Promise<void>;
-}
-
-function startPolling(args: {
+/**
+ * Resolve the webhook secret using a hybrid read pattern.
+ * User-supplied (top-level config.webhookSecret from form field) takes
+ * precedence. If absent, falls back to a prior auto-generated value stored
+ * in pluginData.__autoWebhookSecret. If neither exists, generates a fresh
+ * secret and persists it via updateIntegrationConfig (which writes to
+ * config.pluginData.__autoWebhookSecret).
+ */
+async function ensureWebhookSecret(args: {
   api: PluginHostAPI;
   integrationId: string;
-  botToken: string;
-  state: InstanceState;
-}): PollingHandle {
-  const { api, integrationId, botToken, state } = args;
-  const controller = new AbortController();
-  let offset = 0;
-  let stopped = false;
+  config: Record<string, unknown>;
+}): Promise<string> {
+  const { api, integrationId, config } = args;
+  const supplied =
+    typeof config.webhookSecret === "string" && config.webhookSecret
+      ? config.webhookSecret
+      : undefined;
+  if (supplied) return supplied;
 
-  const loop = (async () => {
-    api.logger.info("telegram polling started", { integrationId });
-    while (!stopped) {
-      const result = await callTelegramApi(
-        api,
-        botToken,
-        "getUpdates",
-        {
-          offset,
-          timeout: POLL_TIMEOUT_SECONDS,
-          allowed_updates: ["message", "edited_message", "channel_post"],
-        },
-        { signal: controller.signal }
-      );
-      if (stopped) {
-        break;
-      }
-      if (!result.ok) {
-        api.logger.warn("telegram getUpdates failed", {
-          integrationId,
-          description: result.description,
-        });
-        // Sleep with abort awareness so shutdown returns promptly.
-        await new Promise<void>((resolve) => {
-          const t = setTimeout(resolve, POLL_BACKOFF_MS);
-          controller.signal.addEventListener(
-            "abort",
-            () => {
-              clearTimeout(t);
-              resolve();
-            },
-            { once: true }
-          );
-        });
-        continue;
-      }
-      const updates = Array.isArray(result.result)
-        ? (result.result as TelegramUpdate[])
-        : [];
-      for (const update of updates) {
-        if (typeof update.update_id === "number") {
-          offset = Math.max(offset, update.update_id + 1);
-        }
-        try {
-          await processTelegramUpdate({ api }, integrationId, state, update);
-        } catch (error) {
-          api.logger.warn("telegram processTelegramUpdate failed", {
-            integrationId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-    }
-    api.logger.info("telegram polling stopped", { integrationId });
-  })();
+  const pluginData = config.pluginData as
+    | Record<string, unknown>
+    | undefined;
+  const cached =
+    pluginData &&
+    typeof pluginData.__autoWebhookSecret === "string" &&
+    pluginData.__autoWebhookSecret
+      ? pluginData.__autoWebhookSecret
+      : undefined;
+  if (cached) return cached;
 
-  return {
-    stop: async () => {
-      stopped = true;
-      controller.abort();
-      try {
-        await loop;
-      } catch {
-        // loop swallows its own errors; abort-on-pending-fetch may surface
-        // here as an AbortError. Either way we're done.
-      }
-    },
-  };
+  const fresh = randomBytes(24).toString("hex");
+  await api.updateIntegrationConfig(integrationId, {
+    __autoWebhookSecret: fresh,
+  });
+  return fresh;
 }
 
 /**
- * Build the `startInstance` callback the host invokes for every active
- * telegram integration row (INSERT, UPDATE-after-shutdown, boot
- * reconciliation).
- *
- * Q5 (Phase 4a.2, resolved 2026-05-21): `startInstance` now auto-registers
- * the inbound webhook URL with telegram-api via `setWebhook`, using
- * `api.publicBaseUrl` to build the absolute callback. `shutdown` calls
- * `deleteWebhook` so a removed integration stops receiving inbound updates
- * upstream. The previous customer-run setWebhook script becomes optional —
- * use it only when `TUPIFLOW_PUBLIC_BASE_URL` / `BETTER_AUTH_URL` is unset
- * (air-gapped deployments).
- *
- * Q6 (Phase 4a.2, resolved 2026-05-21): credential keys are verbatim from
- * the manifest `[[credentials]].key` block. Telegram declares
- * `TELEGRAM_BOT_API_KEY`; the legacy `botToken` alias is gone.
- *
- * Behaviour vs first-party `tupiflow/plugins/telegram/connection.ts`:
- * - Fetches the bot token via `api.fetchCredentials` (instead of reading
- *   `config.botToken` directly).
- * - Caches the per-integration webhook secret + bot username in the
- *   plugin-local registry so the webhook route can authenticate inbound
- *   updates without touching credentials on every request.
- * - `shutdown` removes the registry entry and deregisters the upstream
- *   webhook. There is no long-poll loop to stop (the host's
- *   registry-port plugin runtime does not embed `@chat-adapter/telegram`).
+ * Transform an SDK Message into a ChatMessage for appendThreadMessages.
+ * SDK Message has .text/.author; host ChatMessage needs content/role.
  */
+function sdkMessageToChatMessage(message: Message): ChatMessage {
+  return {
+    content: message.text ?? "",
+    role: "user",
+  };
+}
+
+const ATTACHMENT_BYTE_CAPS: Record<string, number> = {
+  image: 8 * 1024 * 1024,
+  file: 16 * 1024 * 1024,
+  audio: 16 * 1024 * 1024,
+  video: 20 * 1024 * 1024,
+};
+
+const DEFAULT_MIMES: Record<string, string> = {
+  image: "image/jpeg",
+  file: "application/octet-stream",
+  audio: "audio/ogg",
+  video: "video/mp4",
+};
+
+const MAX_PER_MESSAGE: Record<string, number> = {
+  image: 4,
+  file: 4,
+  audio: 2,
+  video: 2,
+};
+
+/**
+ * Convert an SDK attachment to a data: URL ChatAttachment.
+ * Fetches bytes via the SDK's authenticated pipeline, base64-encodes,
+ * and returns a data: URL. Returns null if fetch fails, bytes empty,
+ * or file exceeds per-type byte cap.
+ */
+async function toDataUrlAttachment(
+  sdkAtt: Attachment,
+  logger: PluginHostAPI["logger"]
+): Promise<ChatAttachment | null> {
+  const type = sdkAtt.type ?? "file";
+  const maxBytes = ATTACHMENT_BYTE_CAPS[type] ?? ATTACHMENT_BYTE_CAPS.file;
+  const defaultMime = DEFAULT_MIMES[type] ?? DEFAULT_MIMES.file;
+
+  try {
+    let buf: Buffer | undefined;
+    if (sdkAtt.fetchData) {
+      buf = await sdkAtt.fetchData();
+    } else if (sdkAtt.data) {
+      buf = Buffer.isBuffer(sdkAtt.data)
+        ? sdkAtt.data
+        : Buffer.from(await new Response(sdkAtt.data).arrayBuffer());
+    }
+    if (!buf || buf.byteLength === 0) return null;
+    if (buf.byteLength > maxBytes) {
+      logger.info("telegram attachment dropped: oversize", {
+        type,
+        size: buf.byteLength,
+        maxBytes,
+      });
+      return null;
+    }
+    const mime = sdkAtt.mimeType || defaultMime;
+    const url = `data:${mime};base64,${buf.toString("base64")}`;
+    return {
+      url,
+      mediaType: mime,
+      ...(sdkAtt.name ? { filename: sdkAtt.name } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Process all attachments from an SDK message into categorized
+ * ChatAttachment arrays with data: URLs, respecting per-type caps.
+ */
+async function resolveAttachments(
+  message: Message,
+  logger: PluginHostAPI["logger"]
+): Promise<{
+  imageUrls: ChatAttachment[];
+  fileUrls: ChatAttachment[];
+  audioUrls: ChatAttachment[];
+  videoUrls: ChatAttachment[];
+}> {
+  const imageUrls: ChatAttachment[] = [];
+  const fileUrls: ChatAttachment[] = [];
+  const audioUrls: ChatAttachment[] = [];
+  const videoUrls: ChatAttachment[] = [];
+
+  const buckets: Record<string, ChatAttachment[]> = {
+    image: imageUrls,
+    file: fileUrls,
+    audio: audioUrls,
+    video: videoUrls,
+  };
+
+  for (const att of message.attachments ?? []) {
+    const type = att.type ?? "file";
+    const bucket = buckets[type] ?? fileUrls;
+    const max = MAX_PER_MESSAGE[type] ?? MAX_PER_MESSAGE.file;
+    if (bucket.length >= max) continue;
+    const resolved = await toDataUrlAttachment(att, logger);
+    if (resolved) bucket.push(resolved);
+  }
+
+  return { imageUrls, fileUrls, audioUrls, videoUrls };
+}
+
+/**
+ * Transform SDK thread + message into the ChatMessageEvent shape that
+ * dispatchToWorkflow expects.
+ *
+ * SDK handlers receive (thread, message) as separate arguments.
+ * This mapper bridges the two worlds:
+ *   thread      → channelId, threadId, threadJson, isDM
+ *   message     → text, userName
+ *   caller flag → isMention (true only from onNewMention handler)
+ *   attachments → categorized data: URL arrays
+ */
+function buildChatMessageEvent(
+  integrationId: string,
+  thread: ThreadImpl,
+  message: Message,
+  overrides: { isMention: boolean; isDM: boolean },
+  attachments: {
+    imageUrls: ChatAttachment[];
+    fileUrls: ChatAttachment[];
+    audioUrls: ChatAttachment[];
+    videoUrls: ChatAttachment[];
+  }
+): ChatMessageEvent {
+  const threadJson = thread.toJSON();
+  const channelId = threadJson.channelId || thread.id;
+
+  const userName =
+    typeof message.author?.userName === "string"
+      ? message.author.userName
+      : typeof message.author?.userId === "string"
+        ? message.author.userId
+        : "";
+
+  return {
+    integrationId,
+    text: message.text ?? "",
+    threadJson,
+    isDM: overrides.isDM,
+    isMention: overrides.isMention,
+    channelId,
+    threadId: thread.id,
+    userName,
+    arrivalAt: Date.now(),
+    ...attachments,
+  };
+}
+
+async function dispatchInbound(args: {
+  api: PluginHostAPI;
+  integrationId: string;
+  thread: ThreadImpl;
+  message: Message;
+  isMention: boolean;
+  isDM: boolean;
+}) {
+  const { api, integrationId, thread, message, isMention, isDM } = args;
+
+  await api.chat.appendThreadMessages(
+    integrationId,
+    thread.id,
+    [sdkMessageToChatMessage(message)],
+    undefined,
+    thread.toJSON()
+  );
+  api.chat.notifyMessageAppended(
+    integrationId,
+    thread.id,
+    sdkMessageToChatMessage(message)
+  );
+  api.telemetry.record("tlm_connection_events", {
+    event: "message_in",
+    integration_type: "telegram",
+    integration_id: integrationId,
+  });
+
+  const attachments = await resolveAttachments(message, api.logger);
+  const chatEvent = buildChatMessageEvent(
+    integrationId,
+    thread,
+    message,
+    { isMention, isDM },
+    attachments
+  );
+  try {
+    await api.dispatchToWorkflow(chatEvent);
+  } catch (error) {
+    api.logger.warn("telegram dispatchToWorkflow failed", {
+      integrationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export function makeStartInstance(deps: StartInstanceDeps) {
   const { api, registry } = deps;
   return async function startInstance(args: {
@@ -184,120 +270,113 @@ export function makeStartInstance(deps: StartInstanceDeps) {
   }): Promise<ConnectionInstance> {
     const { integrationId, config } = args;
 
-    // Verbatim credential key — Phase 4a.2 Q6 Convention X. Manifest
-    // declares `TELEGRAM_BOT_API_KEY` under `[[credentials]]`; the host's
-    // credential resolver returns it under exactly that name.
     const creds = await api.fetchCredentials(integrationId);
     const botToken = creds.TELEGRAM_BOT_API_KEY ?? "";
     if (!botToken) {
       throw new Error(
-        `[telegram] integration ${integrationId} is missing TELEGRAM_BOT_API_KEY — set it on the integration credential.`
+        `[telegram] integration ${integrationId} is missing TELEGRAM_BOT_API_KEY`
       );
     }
+    const chatDbUrl = process.env.CONNECTION_CHAT_DATABASE_URL;
+    if (!chatDbUrl) {
+      throw new Error("[telegram] CONNECTION_CHAT_DATABASE_URL is not set");
+    }
+    const secretToken = await ensureWebhookSecret({
+      api,
+      integrationId,
+      config,
+    });
 
-    const webhookSecret =
-      typeof config.webhookSecret === "string" ? config.webhookSecret : "";
     const botUsername =
       typeof config.botUsername === "string" ? config.botUsername : "";
 
-    const state: InstanceState = { webhookSecret, botUsername };
-    registry.set(integrationId, state);
-
-    // Auto-register the webhook URL with telegram-api when `publicBaseUrl`
-    // is HTTPS. Telegram rejects non-HTTPS webhook URLs, so fall back to
-    // long-poll `getUpdates` when no usable base URL is available or when
-    // setWebhook fails for any reason.
-    const baseUrl = api.publicBaseUrl;
-    const baseUrlIsHttps =
-      typeof baseUrl === "string" && baseUrl.startsWith("https://");
-    let webhookAutoRegistered = false;
-    let polling: PollingHandle | null = null;
-
-    if (baseUrlIsHttps) {
-      const url = webhookUrlFor(baseUrl, integrationId);
-      const result = await callTelegramApi(api, botToken, "setWebhook", {
-        url,
-        ...(webhookSecret ? { secret_token: webhookSecret } : {}),
-      });
-      if (result.ok) {
-        webhookAutoRegistered = true;
-        api.logger.info("telegram setWebhook ok", { integrationId, url });
-      } else {
-        api.logger.warn(
-          "telegram setWebhook failed — falling back to polling",
-          { integrationId, url, description: result.description }
-        );
-      }
-    } else if (baseUrl) {
-      api.logger.warn(
-        "telegram publicBaseUrl is not HTTPS — falling back to polling",
-        { integrationId, baseUrl }
-      );
-    } else {
-      api.logger.warn(
-        "telegram publicBaseUrl unset — falling back to polling",
-        { integrationId }
-      );
-    }
-
-    if (!webhookAutoRegistered) {
-      // Clear any existing webhook before polling — Telegram refuses
-      // getUpdates while a webhook is configured.
-      const cleared = await callTelegramApi(api, botToken, "deleteWebhook", {});
-      if (!cleared.ok) {
-        api.logger.warn(
-          "telegram deleteWebhook before polling failed (continuing)",
-          { integrationId, description: cleared.description }
-        );
-      }
-      polling = startPolling({ api, integrationId, botToken, state });
-    }
-
-    api.logger.info("telegram connection started", {
-      integrationId,
-      hasWebhookSecret: webhookSecret.length > 0,
-      webhookAutoRegistered,
-      polling: polling !== null,
+    const adapter = createTelegramAdapter({
+      botToken,
+      mode: "auto",
+      secretToken,
     });
+    const state = createPostgresState({
+      url: chatDbUrl,
+      keyPrefix: `telegram:${integrationId}`,
+    });
+    const chat = new Chat({
+      adapters: { telegram: adapter },
+      state,
+      concurrency: "queue",
+      userName: botUsername,
+    });
+
+    chat.onNewMention(async (thread, message) => {
+      if (await api.chat.getHumanControl(integrationId, thread.id)) return;
+      thread.subscribe();
+      await dispatchInbound({
+        api,
+        integrationId,
+        thread: thread as unknown as ThreadImpl,
+        message,
+        isMention: true,
+        isDM: false,
+      });
+    });
+    chat.onDirectMessage(async (thread, message) => {
+      if (await api.chat.getHumanControl(integrationId, thread.id)) return;
+      thread.subscribe();
+      await dispatchInbound({
+        api,
+        integrationId,
+        thread: thread as unknown as ThreadImpl,
+        message,
+        isMention: false,
+        isDM: true,
+      });
+    });
+    chat.onSubscribedMessage(async (thread, message) => {
+      if (await api.chat.getHumanControl(integrationId, thread.id)) return;
+      await dispatchInbound({
+        api,
+        integrationId,
+        thread: thread as unknown as ThreadImpl,
+        message,
+        isMention: false,
+        isDM: false,
+      });
+    });
+
+    await chat.initialize();
+    api.telemetry.record("tlm_connection_events", {
+      event: "connection_boot",
+      integration_type: "telegram",
+      integration_id: integrationId,
+    });
+
+    await api.connections.shutdownPeer(integrationId);
+
+    const handle = {
+      adapter,
+      chat,
+      integrationId,
+      botUsername,
+      webhookSecret: secretToken,
+    };
+    registry.set(integrationId, handle);
 
     return {
       integrationId,
-      handle: {
-        botToken,
-        webhookSecret,
-        botUsername,
-        webhookAutoRegistered,
-        polling: polling !== null,
-      },
+      handle,
       shutdown: async () => {
+        adapter.stopPolling();
+        await chat.shutdown();
         registry.delete(integrationId);
-        if (polling) {
-          await polling.stop();
-        }
-        if (webhookAutoRegistered) {
-          const result = await callTelegramApi(
-            api,
-            botToken,
-            "deleteWebhook",
-            {}
-          );
-          if (!result.ok) {
-            api.logger.warn("telegram deleteWebhook failed", {
-              integrationId,
-              description: result.description,
-            });
-          }
-        }
-        api.logger.info("telegram connection stopped", { integrationId });
+        api.telemetry.record("tlm_connection_events", {
+          event: "connection_disconnect",
+          integration_type: "telegram",
+          integration_id: integrationId,
+        });
       },
     };
   };
 }
 
-/**
- * Mirror of the first-party `buildTelegramThreadJson`. Used by chat-takeover
- * paths the host invokes outside the workflow trigger pipeline.
- */
 export function buildTelegramThreadJson(
   chatId: string
 ): Record<string, unknown> | null {

@@ -1,11 +1,11 @@
-// telegram — registry plugin port of plugins/telegram from the tupiflow
-// first-party tree. Now wires the Phase 4a.2 connection lifecycle surface:
-// `api.registerConnection` for startInstance / shutdown and
-// `api.dispatchToWorkflow` for inbound message routing.
+// telegram — SDK-based registry plugin port of plugins/telegram.
+// Uses @chat-adapter/telegram + chat SDK for connection lifecycle,
+// inbound message routing, and outbound replies.
 //
-// Webhook URL moves to /plugins/telegram/webhook/<integrationId>. Customers
-// must update their Telegram setWebhook call to the new path; see the
-// per-plugin migration script (PLUGIN_TIERS.md Phase 3 step 6).
+// Webhook URL: /plugins/telegram/webhook/<integrationId>
+// New in 0.4.5: chat-takeover gate, history persistence, telemetry,
+// album batching, requiresHostRestart (SDK imports resolved at boot).
+// Required npm deps: @chat-adapter/telegram, chat.
 
 import type { PluginHostAPI } from "@tupiflow-plugins/shared/host-api-types";
 
@@ -20,11 +20,6 @@ import { createInstanceRegistry, makeWebhookHandler } from "./webhook.ts";
 const SEND_REPLY_TOOL_INPUT_SCHEMA = {
   type: "object",
   properties: {
-    botToken: {
-      type: "string",
-      description:
-        "Telegram bot token. Optional when running inside a registered connection — the step will fetchCredentials by integrationId.",
-    },
     integrationId: {
       type: "string",
       description: "Integration ID the chat trigger emitted.",
@@ -91,7 +86,7 @@ export function registerPlugin(api: PluginHostAPI): void {
         placeholder: "Random secret for webhook validation",
         configKey: "webhookSecret",
         helpText:
-          "Used to verify the X-Telegram-Bot-Api-Secret-Token header on inbound webhook requests.",
+          "Used to verify the X-Telegram-Bot-Api-Secret-Token header on inbound webhook requests. Auto-generated if left blank.",
       },
     ],
     actions: [
@@ -109,15 +104,17 @@ export function registerPlugin(api: PluginHostAPI): void {
     return testTelegram({ TELEGRAM_BOT_API_KEY: credentials.TELEGRAM_BOT_API_KEY });
   });
 
+  const registry = createInstanceRegistry();
+
   api.registerStep("telegramSendReplyStep", async (input: unknown) => {
-    return runSendReply(input as SendReplyInput);
+    return runSendReply(input as SendReplyInput, { registry });
   });
 
   api.registerTool(
     "telegram_send_reply",
     SEND_REPLY_TOOL_INPUT_SCHEMA,
     async (input: unknown) => {
-      const result = await runSendReply(input as SendReplyInput);
+      const result = await runSendReply(input as SendReplyInput, { registry });
       if (!result.success) {
         throw new Error(result.error.message);
       }
@@ -125,18 +122,9 @@ export function registerPlugin(api: PluginHostAPI): void {
     }
   );
 
-  // Phase 4a.2 — connection lifecycle + workflow dispatch.
-  // Per-plugin instance registry holds webhook secret + bot username for
-  // every active integration so the webhook route can authenticate without
-  // re-reading credentials on every request.
-  const registry = createInstanceRegistry();
-
   api.registerConnection({
     startInstance: makeStartInstance({ api, registry }),
     buildThreadJson: buildTelegramThreadJson,
-    // Explicit: matches the synthesized default in connection-dispatch-graph.ts:82.
-    // Host would derive the same value when omitted, but stating it here is
-    // self-documenting and prevents future refactor from silently changing the default.
     replyActionId: "telegram/send-reply",
   });
 
