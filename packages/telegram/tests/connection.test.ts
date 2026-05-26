@@ -100,6 +100,7 @@ function makeApi(args: {
       updateConfigCalls.push({ id, patch });
     },
     registerToolCatalogContributor: () => {},
+    registerAgentToolRuntimeOverrides: () => {},
     registerTakeoverTarget: () => {},
     workflow: {
       create: async () => ({

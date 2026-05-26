@@ -72,6 +72,7 @@ function makeApi(): MockApi {
     testIntegration: async () => ({ success: true }),
     updateIntegrationConfig: async () => {},
     registerToolCatalogContributor: () => {},
+    registerAgentToolRuntimeOverrides: () => {},
     registerTakeoverTarget: () => {},
     workflow: {
       create: async () => ({

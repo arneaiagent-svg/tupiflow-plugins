@@ -109,6 +109,7 @@ function makeApi(opts?: {
     testIntegration: async () => ({ success: true }),
     updateIntegrationConfig: async () => {},
     registerToolCatalogContributor: () => {},
+    registerAgentToolRuntimeOverrides: () => {},
     registerTakeoverTarget: () => {},
     workflow: {
       create: async () => ({

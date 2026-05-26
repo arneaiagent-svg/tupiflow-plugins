@@ -451,6 +451,53 @@ export type ToolCatalogContributor = (
 ) => Promise<ToolCatalogEntry[]>;
 
 /**
+ * Returned by `RuntimeAgentToolRuntimeOverridesFn`. Decorates EXISTING
+ * tools (registered via `api.registerTool` OR
+ * `api.registerToolCatalogContributor`) with defaultArgs (injected into
+ * every model-facing tool call before dispatch) and description
+ * overrides (swapped into the schema the LLM sees).
+ *
+ * Bundled-side counterpart: `AgentToolRuntimeFn` at
+ * tupiflow/backend/src/lib/types/agent-tool-runtime.ts. Tool keys use
+ * the host's agent-tool action ID: `<integrationType>/<step-slug>` (NOT
+ * tool name). The bundled memory plugin keys are `memory/save-memory`,
+ * `memory/search-memory`, `memory/list-memory` — cross-reference
+ * tupiflow/plugins/memory/agent-tool-runtime.ts and
+ * tupiflow/backend/src/lib/steps/ai-agent/tool-runtime.ts for the
+ * resolution path.
+ */
+export type AgentToolRuntimeOverrides = {
+  /** Injected into model args BEFORE tool handler runs. Stripped from the model-facing schema. */
+  defaultArgs?: Record<string, Record<string, unknown>>;
+  /** Replaces tool description in the schema the LLM sees. */
+  descriptions?: Record<string, string>;
+};
+
+/**
+ * Context passed to the overrides function on every agent step
+ * invocation. Carries the chat-trigger context that bundled plugins
+ * read off `RuntimeToolCatalogContext` today (memoryThreadId,
+ * memoryIntegrationId). Field names match the bundled context shape —
+ * cross-reference tupiflow/backend/src/lib/plugin-runtime/runtime-registry.ts.
+ * Additional ctx fields added as new plugins need them — keep optional + scoped.
+ */
+export type AgentToolRuntimeOverridesContext = {
+  memoryThreadId?: string;
+  memoryIntegrationId?: string;
+};
+
+/**
+ * Per-step decoration function registered via
+ * `api.registerAgentToolRuntimeOverrides`. Capability:
+ * `agent.tool-runtime`. Called once per agent step with the active
+ * chat-trigger context. May return synchronously or via a Promise —
+ * the host awaits the return value regardless.
+ */
+export type RuntimeAgentToolRuntimeOverridesFn = (
+  ctx: AgentToolRuntimeOverridesContext
+) => AgentToolRuntimeOverrides | Promise<AgentToolRuntimeOverrides>;
+
+/**
  * §2.5 — Display spec for a takeover target the plugin registers via
  * `api.registerTakeoverTarget`. The plugin declares the target id only;
  * the host owns routing via the agent row's
@@ -1227,6 +1274,25 @@ export type PluginHostAPI = {
    * plugin uninstall/reload, or a 5-minute TTL.
    */
   registerToolCatalogContributor(fn: ToolCatalogContributor): void;
+  /**
+   * Register a per-step decoration function for existing tools.
+   * Different from `registerToolCatalogContributor` (which ADDS
+   * tools): this surface DECORATES already-registered tools with
+   * defaultArgs (server-side argument injection invisible to the LLM)
+   * and description overrides (per-step schema customization the LLM
+   * sees). Capability: `agent.tool-runtime`. Called once per agent step
+   * with the active chat-trigger context. Returned defaultArgs are
+   * merged into model args after the LLM produces a tool call.
+   * Returned descriptions are merged into the tool catalog the LLM
+   * sees at step entry. No-op when no chat-trigger context is active
+   * (ctx fields all undefined). Override merge order with bundled
+   * `AGENT_TOOL_RUNTIME_LOADERS` is bundled-first, registry-second
+   * (registry wins on key collision). Failures isolated: a throw from
+   * one plugin's fn is logged + swallowed; other plugins continue.
+   */
+  registerAgentToolRuntimeOverrides(
+    fn: RuntimeAgentToolRuntimeOverridesFn
+  ): void;
   /**
    * §2.5 — Register a takeover target the agent runtime may route control
    * flow to. Capability: `takeover.register`. The `actionId` MUST match
