@@ -475,15 +475,34 @@ export type AgentToolRuntimeOverrides = {
 
 /**
  * Context passed to the overrides function on every agent step
- * invocation. Carries the chat-trigger context that bundled plugins
- * read off `RuntimeToolCatalogContext` today (memoryThreadId,
- * memoryIntegrationId). Field names match the bundled context shape —
- * cross-reference tupiflow/backend/src/lib/plugin-runtime/runtime-registry.ts.
- * Additional ctx fields added as new plugins need them — keep optional + scoped.
+ * invocation. Mirrors the bundled host's `AgentToolRuntimeContext` shape
+ * (tupiflow/lib/types/agent-tool-runtime.ts) so the host can pass `ctx`
+ * straight through without projection.
+ *
+ * Field semantics:
+ * - `connectionThreadJson`: opaque thread JSON when the agent step is
+ *   invoked via a chat trigger. `null` / `unknown` otherwise.
+ * - `defaultIntegrationIdsByType`: map of `integrationType` → preferred
+ *   integration row id. Plugins consult this when no per-step
+ *   `memoryIntegrationId` (or other type-scoped fallback) is set.
+ * - `memoryIntegrationId` / `memoryThreadId`: chat-trigger memory
+ *   binding; both undefined when no chat context is active.
+ * - `plugins`: opaque map for host/plugin extension data. Optional.
+ * - `userId`: ambient user id from `PluginCallContext`. Undefined for
+ *   system-initiated steps.
+ *
+ * All fields are present at runtime (even when their value is undefined)
+ * because the host constructs the object once per step; this matches the
+ * bundled type's `string | undefined` convention, not `?:` optional
+ * properties, so consumers can rely on field presence in destructuring.
  */
 export type AgentToolRuntimeOverridesContext = {
-  memoryThreadId?: string;
-  memoryIntegrationId?: string;
+  connectionThreadJson: unknown;
+  defaultIntegrationIdsByType: Record<string, string | undefined>;
+  memoryIntegrationId: string | undefined;
+  memoryThreadId: string | undefined;
+  plugins?: Record<string, unknown>;
+  userId: string | undefined;
 };
 
 /**
