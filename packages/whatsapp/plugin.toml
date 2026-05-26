@@ -1,0 +1,20 @@
+capabilities = ["net.fetch", "secrets.read", "connection.lifecycle", "workflow.dispatch", "integration.test", "chat.takeover.read", "chat.history.write", "telemetry.write", "worker.run"]
+
+[identity]
+name        = "whatsapp"
+type        = "whatsapp"
+version     = "0.1.0"
+publisher   = "tupiflow"
+description = "WhatsApp (Baileys) integration. Link a personal/business account via QR; receive messages + send replies."
+
+[runtime]
+min_tupiflow_version = "0.0.0"
+requires_host_restart = true
+
+[icon]
+kind = "svg"
+path = "icon.svg"
+
+[required_npm_deps]
+"chat-adapter-baileys" = "^2.0.2"
+"chat"                 = "^4.26.0"

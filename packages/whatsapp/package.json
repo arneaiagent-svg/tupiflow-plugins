@@ -1,0 +1,33 @@
+{
+  "name": "@tupiflow-plugins/whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:watch": "node build.mjs --watch",
+    "type-check": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "register": "node register.mjs",
+    "dev-install": "node register.mjs",
+    "deregister": "node deregister.mjs",
+    "dev-uninstall": "node deregister.mjs",
+    "dev": "node dev.mjs"
+  },
+  "dependencies": {
+    "@tupiflow-plugins/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@chat-adapter/state-pg": "^4.26.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "baileys": "7.0.0-rc.9",
+    "chat": "^4.26.0",
+    "chat-adapter-baileys": "^2.0.2",
+    "lucide-react": "^0.552.0",
+    "postgres": "^3.4.7",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  }
+}
