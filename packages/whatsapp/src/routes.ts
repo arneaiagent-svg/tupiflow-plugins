@@ -15,11 +15,29 @@ import type { Chat } from "chat";
 
 import type {
   PluginHostAPI,
+  RouteContext,
   RouteHandler,
 } from "@tupiflow-plugins/shared/host-api-types";
 
 import { getWhatsappLinkState, type WhatsappLinkState } from "./link-state.ts";
 import { getWhatsappSessionDir } from "./session-dir.ts";
+
+// Defense-in-depth: integrationId arrives via path param. Validate the format
+// before using it as a directory name or DB key prefix to block `..`, `/`, or
+// other traversal/injection attempts. Host's RBAC gate is authoritative for
+// ownership; this regex blocks malformed IDs that the auth gate would let
+// through if the row id was somehow attacker-controlled.
+const INTEGRATION_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+function assertValidIntegrationId(
+  ctx: RouteContext,
+  integrationId: string
+): unknown | undefined {
+  if (!INTEGRATION_ID_RE.test(integrationId)) {
+    return ctx.json({ error: "Invalid integrationId" }, 400);
+  }
+  return undefined;
+}
 
 export interface WhatsappInstance {
   adapter: BaileysAdapter;
@@ -77,6 +95,31 @@ export interface RouteDeps {
   registry: InstanceRegistry;
 }
 
+/**
+ * Tenant-scoped ownership check. `api.integrations.list({type})` returns rows
+ * owned by the caller's resolved userId only — cross-tenant rows are never
+ * returned. If `integrationId` is not in the result, the caller does not own
+ * the row (or it does not exist). Returns true when owned, false otherwise.
+ *
+ * Used by reset to gate destructive cleanup BEFORE wiping the on-disk session
+ * directory and chat-state rows. Without this gate, a caller with the
+ * `update:Integration` ability could guess any integrationId and wipe a
+ * foreign tenant's WhatsApp session state before `api.connections.restart`
+ * surfaces the 403.
+ */
+async function callerOwnsIntegration(
+  api: PluginHostAPI,
+  integrationId: string
+): Promise<boolean> {
+  try {
+    const rows = await api.integrations.list({ type: "whatsapp" });
+    return rows.some((r) => r.id === integrationId);
+  } catch (error) {
+    console.warn("[whatsapp] integrations.list failed:", error);
+    return false;
+  }
+}
+
 type QrWorkerOutput = { ok: boolean; dataUrl?: string; error?: string };
 
 /**
@@ -96,6 +139,8 @@ export function makeWhatsappQrHandler(deps: RouteDeps): RouteHandler {
     if (!integrationId) {
       return ctx.json({ error: "missing integrationId" }, 400);
     }
+    const bad = assertValidIntegrationId(ctx, integrationId);
+    if (bad) return bad;
     try {
       const state = getWhatsappLinkState(integrationId);
       if (!state) {
@@ -156,6 +201,12 @@ export function makeWhatsappResetHandler(deps: RouteDeps): RouteHandler {
     const integrationId = ctx.req.param("integrationId");
     if (!integrationId) {
       return ctx.json({ error: "missing integrationId" }, 400);
+    }
+    const bad = assertValidIntegrationId(ctx, integrationId);
+    if (bad) return bad;
+
+    if (!(await callerOwnsIntegration(api, integrationId))) {
+      return ctx.json({ error: "Integration not found" }, 404);
     }
 
     const restart =

@@ -1,4 +1,7 @@
 import { strict as assert } from "node:assert";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import type {
@@ -47,7 +50,28 @@ function makeApi(opts?: {
   runTaskImpl?: (workerId: string, input: unknown) => Promise<unknown>;
   restartImpl?: (id: string) => Promise<boolean>;
   restartUndefined?: boolean;
+  integrationsList?: Array<{
+    id: string;
+    userId: string;
+    name: string;
+    type: string;
+    isManaged: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }>;
 }): PluginHostAPI {
+  const integrationsList =
+    opts?.integrationsList ?? [
+      {
+        id: "int-1",
+        userId: "user-1",
+        name: "WA Test",
+        type: "whatsapp",
+        isManaged: false,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      },
+    ];
   const baseConnections = {
     types: async () => [],
     sendReply: async () => ({ delivered: false, threadId: "stub" }),
@@ -121,7 +145,7 @@ function makeApi(opts?: {
       delete: async () => {},
     },
     integrations: {
-      list: async () => [],
+      list: async () => integrationsList,
       describe: async () => null,
     },
     connections,
@@ -149,6 +173,22 @@ function clearChatDbUrl(): () => void {
     if (prev !== undefined) {
       process.env.CONNECTION_CHAT_DATABASE_URL = prev;
     }
+  };
+}
+
+// Isolate WHATSAPP_SESSION_DIR so reset-path tests cannot rmSync a real
+// Baileys session directory if the developer has the env var set.
+function withTempSessionDir(): () => void {
+  const prev = process.env.WHATSAPP_SESSION_DIR;
+  const tmp = mkdtempSync(join(tmpdir(), "whatsapp-sessions-"));
+  process.env.WHATSAPP_SESSION_DIR = tmp;
+  return () => {
+    if (prev === undefined) {
+      delete process.env.WHATSAPP_SESSION_DIR;
+    } else {
+      process.env.WHATSAPP_SESSION_DIR = prev;
+    }
+    rmSync(tmp, { recursive: true, force: true });
   };
 }
 
@@ -257,6 +297,7 @@ test("Reset — feature-detect api.connections.restart undefined returns 500 wit
 
 test("Reset — happy path calls api.connections.restart and returns success", async () => {
   const restore = clearChatDbUrl();
+  const restoreSessionDir = withTempSessionDir();
   try {
     const restartCalls: string[] = [];
     const api = makeApi({
@@ -274,12 +315,14 @@ test("Reset — happy path calls api.connections.restart and returns success", a
     const body = calls[0].body as Record<string, unknown>;
     assert.equal(body.success, true);
   } finally {
+    restoreSessionDir();
     restore();
   }
 });
 
 test("Reset — IntegrationOwnershipError thrown by restart surfaces as 403", async () => {
   const restore = clearChatDbUrl();
+  const restoreSessionDir = withTempSessionDir();
   try {
     const api = makeApi({
       restartImpl: async () => {
@@ -294,6 +337,7 @@ test("Reset — IntegrationOwnershipError thrown by restart surfaces as 403", as
     await handler(ctx);
     assert.equal(calls[0].status, 403);
   } finally {
+    restoreSessionDir();
     restore();
   }
 });
@@ -308,6 +352,36 @@ test("Reset — missing update:Integration ability returns 403", async () => {
   });
   await handler(ctx);
   assert.equal(calls[0].status, 403);
+});
+
+test("Reset — caller does NOT own integration returns 404 BEFORE wipe", async () => {
+  const restore = clearChatDbUrl();
+  const restoreSessionDir = withTempSessionDir();
+  try {
+    // integrations.list returns empty → caller does not own int-foreign.
+    // Reset MUST return 404 without invoking restart() or rmSync.
+    const restartCalls: string[] = [];
+    const api = makeApi({
+      integrationsList: [],
+      restartImpl: async (id: string) => {
+        restartCalls.push(id);
+        return true;
+      },
+    });
+    const registry = createInstanceRegistry();
+    const handler = makeWhatsappResetHandler({ api, registry });
+    const { ctx, calls } = makeCtx({ integrationId: "int-foreign" });
+    await handler(ctx);
+    assert.equal(calls[0].status, 404);
+    assert.equal(
+      restartCalls.length,
+      0,
+      "restart MUST NOT be called when ownership check fails"
+    );
+  } finally {
+    restoreSessionDir();
+    restore();
+  }
 });
 
 test("Reset — missing integrationId param returns 400", async () => {

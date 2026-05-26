@@ -1,4 +1,4 @@
-capabilities = ["net.fetch", "secrets.read", "connection.lifecycle", "workflow.dispatch", "integration.test", "chat.takeover.read", "chat.history.write", "telemetry.write", "worker.run"]
+capabilities = ["net.fetch", "secrets.read", "connection.lifecycle", "workflow.dispatch", "integration.test", "chat.takeover.read", "chat.history.write", "telemetry.write", "worker.run", "route.context.user", "db.read"]
 
 [identity]
 name        = "whatsapp"
